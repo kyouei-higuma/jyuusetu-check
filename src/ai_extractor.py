@@ -7,8 +7,10 @@ import re
 
 import google.generativeai as genai
 
-# デフォルトモデル: gemini-2.5-flash は無料枠あり（gemini-2.0-flash は 2026年廃止済み）
+# デフォルトモデル: gemini-2.5-flash は無料枠あり
+# セーフティブロック時の代替: gemini-1.5-flash（別の安全フィルター挙動）
 DEFAULT_MODEL = "models/gemini-2.5-flash"
+FALLBACK_MODEL = "models/gemini-1.5-flash"
 
 
 class ModelNotFoundError(Exception):
@@ -652,9 +654,10 @@ def _parse_issues_json(response_text: str) -> list:
 
 def _run_form_check(api_key: str, reference_images: list, target_images: list, model_name: str = DEFAULT_MODEL) -> list[dict]:
     """フォーム記載チェックのみを実行。重説画像のみを渡し、1ページ目=最初の画像で確実にチェックする。"""
-    # 重説画像のみを渡す（根拠資料が多いと重説が後ろに埋もれて検出されない問題を解消）
+    # 重説画像のみを渡す。セーフティブロック対策：最初の3ページのみ送信（1ページ目に主要項目あり）
+    target_limited = list(target_images)[:3] if len(target_images) > 3 else list(target_images)
     prompt = FORM_CHECK_PROMPT_TEMPLATE
-    content_parts = [prompt] + list(target_images)
+    content_parts = [prompt] + target_limited
 
     try:
         from google.generativeai.types import HarmCategory, HarmBlockThreshold
@@ -741,26 +744,31 @@ def verify_disclosure_against_evidence(
     model = model_name or DEFAULT_MODEL
     # 第1段階: フォーム記載チェック（重説画像のみを渡して確実に実行）
     form_issues: list[dict] = []
-    try:
-        form_issues = _run_form_check(api_key, reference_images, target_images, model)
-        # フォームチェックは重説のみを渡しているため image_index は 0,1,2...。マージ時に根拠資料の枚数を加算
-        ref_count = len(reference_images)
-        for issue in form_issues:
-            idx = issue.get("image_index")
-            if idx is not None and isinstance(idx, (int, float)):
-                issue["image_index"] = int(idx) + ref_count
-    except (SafetyBlockError, JSONParseError):
-        # フォームチェック失敗時は警告として1件追加し、照合は続行
-        form_issues = [{
-            "category": "フォームチェック",
-            "status": "warning",
-            "item": "実行エラー",
-            "evidence": "",
-            "target": "",
-            "message": "フォーム記載チェックの実行に失敗しました。照合結果のみ表示しています。",
-            "box_2d": None,
-            "image_index": None,
-        }]
+    form_models = [model] if model == FALLBACK_MODEL else [model, FALLBACK_MODEL]
+    for form_model in form_models:
+        try:
+            form_issues = _run_form_check(api_key, reference_images, target_images, form_model)
+            # フォームチェックは重説のみを渡しているため image_index は 0,1,2...。マージ時に根拠資料の枚数を加算
+            ref_count = len(reference_images)
+            for issue in form_issues:
+                idx = issue.get("image_index")
+                if idx is not None and isinstance(idx, (int, float)):
+                    issue["image_index"] = int(idx) + ref_count
+            break
+        except (SafetyBlockError, JSONParseError):
+            if form_model == FALLBACK_MODEL:
+                form_issues = [{
+                    "category": "フォームチェック",
+                    "status": "warning",
+                    "item": "実行エラー",
+                    "evidence": "",
+                    "target": "",
+                    "message": "フォーム記載チェックの実行に失敗しました。照合結果のみ表示しています。",
+                    "box_2d": None,
+                    "image_index": None,
+                }]
+            else:
+                continue  # 代替モデル(gemini-1.5-flash)でリトライ
 
     # 第2段階: 添付資料・数値照合（メインAPI呼び出し）
     generation_config = genai.types.GenerationConfig(
@@ -795,30 +803,33 @@ def verify_disclosure_against_evidence(
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
         ]
 
-    # マルチモーダル対応モデル（デフォルト: gemini-2.5-flash 無料枠あり）
-    gen_model = genai.GenerativeModel(model, safety_settings=safety_settings)
-    response = gen_model.generate_content(
-        content_parts,
-        generation_config=generation_config,
-    )
-
-    # finish_reason を確認してから response.text にアクセス（ブロック時は .text が使えないため）
-    if not response.candidates:
-        raise SafetyBlockError(
-            "安全性の制限により解析が中断されました。プロンプトを見直すか、再度お試しください。"
-        )
-    c0 = response.candidates[0]
-    finish_reason = getattr(c0, "finish_reason", None)
-    # 1 = STOP (正常終了), 2 = MAX_TOKENS, 3 = SAFETY 等。正常終了時のみ .text を参照する
-    reason_ok = finish_reason in (1, "STOP", "stop") or (
-        finish_reason is not None and "STOP" in str(getattr(finish_reason, "name", str(finish_reason)))
-    )
-    if not reason_ok:
-        raise SafetyBlockError(
-            "安全性の制限により解析が中断されました。プロンプトを見直すか、再度お試しください。"
-        )
-
-    response_text = (response.text or "").strip()
+    # マルチモーダル対応モデル。セーフティブロック時は gemini-1.5-flash でリトライ
+    response_text = ""
+    last_error: Exception | None = None
+    verify_models = [model] if model == FALLBACK_MODEL else [model, FALLBACK_MODEL]
+    for verify_model in verify_models:
+        try:
+            gen_model = genai.GenerativeModel(verify_model, safety_settings=safety_settings)
+            response = gen_model.generate_content(
+                content_parts,
+                generation_config=generation_config,
+            )
+            if not response.candidates:
+                raise SafetyBlockError("解析がブロックされました。")
+            c0 = response.candidates[0]
+            finish_reason = getattr(c0, "finish_reason", None)
+            reason_ok = finish_reason in (1, "STOP", "stop") or (
+                finish_reason is not None and "STOP" in str(getattr(finish_reason, "name", str(finish_reason)))
+            )
+            if not reason_ok:
+                raise SafetyBlockError("解析がブロックされました。")
+            response_text = (response.text or "").strip()
+            break
+        except SafetyBlockError as e:
+            last_error = e
+            if verify_model == FALLBACK_MODEL:
+                raise
+            continue  # 代替モデル(gemini-1.5-flash)でリトライ
     if not response_text:
         # 空の応答でもフォームチェック結果は返す
         return form_issues

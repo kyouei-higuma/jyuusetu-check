@@ -72,6 +72,16 @@ with st.sidebar:
 
     st.divider()
 
+    # セーフティブロック対策：画像量を制限するオプション
+    use_light_mode = st.checkbox(
+        "簡易モード（画像量を制限）",
+        value=False,
+        help="資料が多いとセーフティブロックされやすい場合に有効。根拠資料・重説それぞれ最大5ページまで送信します。",
+        key="light_mode",
+    )
+
+    st.divider()
+
     st.caption("※ PDFは画像としてGeminiで解析します。スキャンPDFも利用できます。")
     st.caption("※ デフォルトは gemini-2.5-flash（無料枠あり）。Secrets の GEMINI_MODEL で変更可。")
 
@@ -153,6 +163,13 @@ if st.session_state.get("process_started", False):
         st.warning("重要事項説明書から画像を取得できませんでした。")
         st.stop()
 
+    # 簡易モード：画像量を制限してセーフティブロックを回避
+    max_pages = 5 if st.session_state.get("light_mode", False) else 999
+    reference_images_all = reference_images_all[:max_pages]
+    target_images_all = target_images_all[:max_pages]
+    if st.session_state.get("light_mode", False):
+        st.info("📌 簡易モード：根拠資料・重説それぞれ最大5ページまで送信しています。")
+
     # 使用モデル（Secrets の GEMINI_MODEL で上書き可。gemini-3-pro は無料枠なしのため 429 回避でフォールバック）
     try:
         gemini_model = st.secrets.get("GEMINI_MODEL", "models/gemini-2.5-flash")
@@ -175,7 +192,7 @@ if st.session_state.get("process_started", False):
                     st.warning("再試行中...")
                     continue
                 st.error("安全性の制限により解析が中断されました。")
-                st.info("💡 **対処法:** 再度お試しください。登記簿・契約書の住所・氏名等でブロックされる場合は、資料の量を減らすか、数分待ってから再実行してください。")
+                st.info("💡 **対処法:** 再度お試しください。システムは自動で gemini-1.5-flash にも切り替えて再試行しています。それでもブロックされる場合は、資料の量を減らすか、数分待ってから再実行してください。")
                 st.stop()
             except JSONParseError as e:
                 st.error("AIからの応答が解析できませんでした。")
