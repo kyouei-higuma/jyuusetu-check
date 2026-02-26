@@ -163,28 +163,34 @@ if st.session_state.get("process_started", False):
 
     # Geminiで照合チェック（フォームチェック → 添付資料・数値照合の2段階）
     with st.spinner("フォームチェックと照合を実行中..."):
-        try:
-            issues = verify_disclosure_against_evidence(
-                gemini_api_key, reference_images_all, target_images_all, model_name=gemini_model
-            )
-        except SafetyBlockError as e:
-            st.error("安全性の制限により解析が中断されました。")
-            st.info("💡 **対処法:** プロンプトを見直すか、再度お試しください。登記簿・契約書の住所・氏名等でブロックされる場合は、資料を分割するか2段階チェック（添付資料チェック→数値照合）の利用を検討してください。")
-            st.stop()
-        except JSONParseError as e:
-            st.error("AIからの応答が解析できませんでした。")
-            st.info("💡 **対処法:** 解析を再試行するか、資料の量を減らして再度お試しください。応答が長いと末尾が欠けることがあります。")
-            with st.expander("技術詳細（生の応答を確認）"):
-                st.text(e.raw_response[:10000] + ("…" if len(e.raw_response) > 10000 else ""))
-            st.stop()
-        except json.JSONDecodeError as e:
-            st.error("Geminiの応答のJSON解析に失敗しました。")
-            st.info("💡 **対処法:** 解析を再試行するか、資料の量を減らして再度お試しください。")
-            st.stop()
-        except Exception as e:
-            st.error(f"Geminiによる解析に失敗しました。{e}")
-            st.info("💡 **対処法:** 解析を再試行するか、資料の量を減らして再度お試しください。")
-            st.stop()
+        issues = None
+        for attempt in range(2):  # セーフティブロック時は1回リトライ
+            try:
+                issues = verify_disclosure_against_evidence(
+                    gemini_api_key, reference_images_all, target_images_all, model_name=gemini_model
+                )
+                break
+            except SafetyBlockError:
+                if attempt == 0:
+                    st.warning("再試行中...")
+                    continue
+                st.error("安全性の制限により解析が中断されました。")
+                st.info("💡 **対処法:** 再度お試しください。登記簿・契約書の住所・氏名等でブロックされる場合は、資料の量を減らすか、数分待ってから再実行してください。")
+                st.stop()
+            except JSONParseError as e:
+                st.error("AIからの応答が解析できませんでした。")
+                st.info("💡 **対処法:** 解析を再試行するか、資料の量を減らして再度お試しください。応答が長いと末尾が欠けることがあります。")
+                with st.expander("技術詳細（生の応答を確認）"):
+                    st.text(e.raw_response[:10000] + ("…" if len(e.raw_response) > 10000 else ""))
+                st.stop()
+            except json.JSONDecodeError as e:
+                st.error("Geminiの応答のJSON解析に失敗しました。")
+                st.info("💡 **対処法:** 解析を再試行するか、資料の量を減らして再度お試しください。")
+                st.stop()
+            except Exception as e:
+                st.error(f"Geminiによる解析に失敗しました。{e}")
+                st.info("💡 **対処法:** 解析を再試行するか、資料の量を減らして再度お試しください。")
+                st.stop()
 
     # 結果表示
     st.subheader("照合結果")
