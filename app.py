@@ -73,7 +73,7 @@ with st.sidebar:
     st.divider()
 
     st.caption("※ PDFは画像としてGeminiで解析します。スキャンPDFも利用できます。")
-    st.caption("※ デフォルトは gemini-2.0-flash（無料枠あり）。Secrets の GEMINI_MODEL で変更可。")
+    st.caption("※ デフォルトは gemini-2.5-flash（無料枠あり）。Secrets の GEMINI_MODEL で変更可。")
 
 # ---------- メインエリア ----------
 st.title("📄 重要事項説明書 クロスチェック")
@@ -155,11 +155,11 @@ if st.session_state.get("process_started", False):
 
     # 使用モデル（Secrets の GEMINI_MODEL で上書き可。gemini-3-pro は無料枠なしのため 429 回避でフォールバック）
     try:
-        gemini_model = st.secrets.get("GEMINI_MODEL", "models/gemini-2.0-flash")
+        gemini_model = st.secrets.get("GEMINI_MODEL", "models/gemini-2.5-flash")
     except (AttributeError, KeyError, FileNotFoundError):
-        gemini_model = "models/gemini-2.0-flash"
+        gemini_model = "models/gemini-2.5-flash"
     if "gemini-3" in str(gemini_model).lower():
-        gemini_model = "models/gemini-2.0-flash"  # 無料枠なしモデルは 429 になるため強制フォールバック
+        gemini_model = "models/gemini-2.5-flash"  # 無料枠なしモデルは 429 になるため強制フォールバック
 
     # Geminiで照合チェック（フォームチェック → 添付資料・数値照合の2段階）
     with st.spinner("フォームチェックと照合を実行中..."):

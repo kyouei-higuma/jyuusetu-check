@@ -7,8 +7,8 @@ import re
 
 import google.generativeai as genai
 
-# デフォルトモデル: gemini-2.0-flash は無料枠あり。gemini-3-pro は課金必須（limit: 0）
-DEFAULT_MODEL = "models/gemini-2.0-flash"
+# デフォルトモデル: gemini-2.5-flash は無料枠あり（gemini-2.0-flash は 2026年廃止済み）
+DEFAULT_MODEL = "models/gemini-2.5-flash"
 
 
 class ModelNotFoundError(Exception):
