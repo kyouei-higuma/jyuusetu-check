@@ -8,9 +8,9 @@ import re
 import google.generativeai as genai
 
 # デフォルトモデル: gemini-2.5-flash は無料枠あり
-# セーフティブロック時の代替: gemini-1.5-flash（別の安全フィルター挙動）
+# セーフティブロック時の代替: gemini-2.5-flash-lite（別の安全フィルター挙動、v1beta対応）
 DEFAULT_MODEL = "models/gemini-2.5-flash"
-FALLBACK_MODEL = "models/gemini-1.5-flash"
+FALLBACK_MODEL = "models/gemini-2.5-flash-lite"
 
 
 class ModelNotFoundError(Exception):
@@ -768,7 +768,7 @@ def verify_disclosure_against_evidence(
                     "image_index": None,
                 }]
             else:
-                continue  # 代替モデル(gemini-1.5-flash)でリトライ
+                continue  # 代替モデル(gemini-2.5-flash-lite)でリトライ
 
     # 第2段階: 添付資料・数値照合（メインAPI呼び出し）
     generation_config = genai.types.GenerationConfig(
@@ -803,7 +803,7 @@ def verify_disclosure_against_evidence(
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
         ]
 
-    # マルチモーダル対応モデル。セーフティブロック時は gemini-1.5-flash でリトライ
+    # マルチモーダル対応モデル。セーフティブロック時は gemini-2.5-flash-lite でリトライ
     response_text = ""
     last_error: Exception | None = None
     verify_models = [model] if model == FALLBACK_MODEL else [model, FALLBACK_MODEL]
@@ -829,7 +829,7 @@ def verify_disclosure_against_evidence(
             last_error = e
             if verify_model == FALLBACK_MODEL:
                 raise
-            continue  # 代替モデル(gemini-1.5-flash)でリトライ
+            continue  # 代替モデル(gemini-2.5-flash-lite)でリトライ
     if not response_text:
         # 空の応答でもフォームチェック結果は返す
         return form_issues

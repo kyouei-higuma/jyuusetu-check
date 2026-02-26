@@ -192,7 +192,7 @@ if st.session_state.get("process_started", False):
                     st.warning("再試行中...")
                     continue
                 st.error("安全性の制限により解析が中断されました。")
-                st.info("💡 **対処法:** 再度お試しください。システムは自動で gemini-1.5-flash にも切り替えて再試行しています。それでもブロックされる場合は、資料の量を減らすか、数分待ってから再実行してください。")
+                st.info("💡 **対処法:** 再度お試しください。システムは自動で gemini-2.5-flash-lite にも切り替えて再試行しています。それでもブロックされる場合は、資料の量を減らすか、数分待ってから再実行してください。")
                 st.stop()
             except JSONParseError as e:
                 st.error("AIからの応答が解析できませんでした。")
