@@ -1,7 +1,7 @@
 """
 不動産重要事項説明書 照合チェック - Streamlitアプリ
 根拠資料（登記簿・公図など）と重要事項説明書を照合し、記載内容の一致をチェックします。
-PDFは画像化してGoogle Gemini 3.0 Pro に視覚的に読み取らせます。
+PDFは画像化してGoogle Gemini に視覚的に読み取らせます。
 """
 import base64
 import io
@@ -49,34 +49,42 @@ st.set_page_config(
 with st.sidebar:
     st.header("設定")
 
-    # secrets.tomlからAPIキーを取得（設定されていない場合は入力欄を表示）
+    # Streamlit Secrets から API キーを優先取得（Streamlit Cloud デプロイ対応）
+    # GOOGLE_API_KEY: Streamlit Cloud の Secrets で一般的なキー名
+    # GEMINI_API_KEY: ローカル .streamlit/secrets.toml との互換用
+    gemini_api_key = ""
     try:
-        gemini_api_key = st.secrets.get("GEMINI_API_KEY", "")
+        gemini_api_key = st.secrets.get("GOOGLE_API_KEY", "") or st.secrets.get("GEMINI_API_KEY", "")
     except (AttributeError, KeyError, FileNotFoundError):
-        gemini_api_key = ""
+        pass
 
-    # secrets.tomlに設定されていない場合のみ入力欄を表示
-    if not gemini_api_key:
+    # Secrets に設定がない場合のみ入力欄を表示
+    if not (gemini_api_key and gemini_api_key.strip()):
         gemini_api_key = st.text_input(
             "Google Gemini API Key",
             type="password",
             key="gemini_api_key_input",
             placeholder="Google Gemini APIキーを入力",
-            help="Google Gemini APIキーを入力してください。または .streamlit/secrets.toml に設定してください。",
+            help="Google Gemini APIキーを入力してください。または Streamlit Secrets（GOOGLE_API_KEY / GEMINI_API_KEY）に設定してください。",
         )
     else:
-        st.success("✅ APIキーは secrets.toml から読み込まれました")
+        st.success("✅ APIキーは Secrets から読み込まれました")
 
     st.divider()
 
     st.caption("※ PDFは画像としてGeminiで解析します。スキャンPDFも利用できます。")
+    st.caption("※ デフォルトは gemini-2.0-flash（無料枠あり）。Secrets の GEMINI_MODEL で変更可。")
 
 # ---------- メインエリア ----------
 st.title("📄 重要事項説明書 クロスチェック")
 st.caption("根拠資料（登記簿・公図など）と重要事項説明書を照合し、記載内容の一致を厳密にチェックします。")
 
 if not (gemini_api_key and gemini_api_key.strip()):
-    st.warning("👈 左のサイドバーでGoogle Gemini APIキーを入力してください")
+    st.warning(
+        "⚠️ **APIキーが設定されていません。** "
+        "左のサイドバーでGoogle Gemini APIキーを入力するか、"
+        "Streamlit Cloud の Secrets に `GOOGLE_API_KEY` を設定してください。"
+    )
     st.stop()
 
 # 2カラムレイアウトでファイルアップロード
@@ -145,11 +153,19 @@ if st.session_state.get("process_started", False):
         st.warning("重要事項説明書から画像を取得できませんでした。")
         st.stop()
 
-    # Geminiで照合チェック
-    with st.spinner("Gemini 3.0 Pro で照合中..."):
+    # 使用モデル（Secrets の GEMINI_MODEL で上書き可。gemini-3-pro は無料枠なしのため 429 回避でフォールバック）
+    try:
+        gemini_model = st.secrets.get("GEMINI_MODEL", "models/gemini-2.0-flash")
+    except (AttributeError, KeyError, FileNotFoundError):
+        gemini_model = "models/gemini-2.0-flash"
+    if "gemini-3" in str(gemini_model).lower():
+        gemini_model = "models/gemini-2.0-flash"  # 無料枠なしモデルは 429 になるため強制フォールバック
+
+    # Geminiで照合チェック（フォームチェック → 添付資料・数値照合の2段階）
+    with st.spinner("フォームチェックと照合を実行中..."):
         try:
             issues = verify_disclosure_against_evidence(
-                gemini_api_key, reference_images_all, target_images_all
+                gemini_api_key, reference_images_all, target_images_all, model_name=gemini_model
             )
         except SafetyBlockError as e:
             st.error("安全性の制限により解析が中断されました。")

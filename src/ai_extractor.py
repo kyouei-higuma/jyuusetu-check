@@ -7,6 +7,9 @@ import re
 
 import google.generativeai as genai
 
+# デフォルトモデル: gemini-2.0-flash は無料枠あり。gemini-3-pro は課金必須（limit: 0）
+DEFAULT_MODEL = "models/gemini-2.0-flash"
+
 
 class ModelNotFoundError(Exception):
     """モデルが見つからない場合の例外。利用可能なモデル一覧を含む。"""
@@ -71,16 +74,70 @@ VERIFY_PROMPT_TEMPLATE = """**【重要：業務遂行宣言】**
 
 ---
 
-**【解析の2ステップ構成】**
-一度に大量のテキストを出力するとブロックされやすいため、次の順序で処理し、出力もこの順で簡潔に行ってください。
+**【解析の3ステップ構成】**
+一度に大量のテキストを出力するとブロックされやすいため、次の順序で処理し、出力もこの順で簡潔に行ってください。**ステップ2のフォーム記載チェックは省略禁止です。必ず実行してください。**
 
 **ステップ1（まず実行）: 添付資料の有無の判定**
 - 資料完備性ゲートと添付書類コンプリート（物件種別・ガス・下水道の判定緩和を含む）を実行し、不足している資料の一覧を先に確定してください。
 - 出力するJSONリストの**先頭**に、添付資料不足・資料不足の指摘（1件に集約したもの）を置いてください。
 
-**ステップ2（その後に実行）: 中身の数値照合**
-- ステップ1の後に、所在・地番・所有者・表記・法令上の制限・実務知恵袋ルール・方位記号等の照合を実行してください。
-- その結果を、JSONリストの**ステップ1の結果の後**に続けて並べてください。一度に長文を生成せず、各指摘は簡潔に記載してください。
+**ステップ2（必須・省略禁止）: 重要事項説明書フォーム記載チェック**
+- 重要事項説明書の1ページ目〜5ページ目を**必ず**スキャンし、以下の【重要事項説明書フォーム詳細チェックルール】を**漏れなく実行**してください。スキップしてはいけません。
+- 該当する指摘をJSONリストの**ステップ1の結果の直後**に並べてください。
+
+**ステップ3（その後に実行）: 中身の数値照合**
+- 所在・地番・所有者・表記・法令上の制限・実務知恵袋ルール・方位記号等の照合を実行してください。
+- その結果を、JSONリストの**ステップ2の結果の後**に続けて並べてください。一度に長文を生成せず、各指摘は簡潔に記載してください。
+
+---
+
+**【重要事項説明書フォーム詳細チェックルール】（ステップ2で必ず実行）**
+重要事項説明書の各ページ・各欄について、**必ず**以下のルールでチェックし、該当する場合はJSONリストに含めて出力してください。**このチェックをスキップすることは厳禁です。**
+
+**1. 1ページ目：宅地建物取引士名・登録番号等欄の空白チェック**
+- 「氏名」「登録番号」等の欄に空白がある場合は、status: "error" で指摘してください。
+- 例：氏名欄が空、登録番号欄が空（例：「氏名　安斉　貴大」「登録番号　石狩 第23339号」のような形式で記載されているべき箇所が空白の場合）。
+
+**2. 1ページ目：弊社の情報の固定値照合**
+以下の内容と異なる記載がある場合は、status: "error" で指摘してください。
+- 住所：旭川市永山2条19丁目4番1号
+- TEL：0166-48-2349
+- 会社名：株式会社　杏栄
+- 代表取締役：中村　文彦
+- 免許証番号：北海道知事 上川 (9) 第774号
+
+**3. 1ページ目：供託所等に関する説明の固定値照合**
+「供託所等に関する説明」の欄を必ず確認し、以下の内容と**1文字でも異なる**記載があれば status: "error" で指摘してください。別の法務局・別の本部・別の住所の記載があれば必ず指摘すること。
+- 宅地建物取引業保証協会の名称及び所在地：公益社団法人　全国宅地建物取引業保証協会、東京都千代田区岩本町２丁目６番３号
+- 所属地方本部の名称及び所在地：北海道本部、北海道札幌市白石区東札幌1条1-1-8、じょうてつビル
+- 弁済業務保証金の供託所及び所在地：東京法務局、東京都千代田区九段南１丁目１番15号
+
+**4. 1ページ目：売る主の表示欄**
+- 「合計〇名」の〇の部分が空白の場合、status: "error" で指摘してください。
+
+**5. 2ページ目：(1)土地欄の地目欄**
+- 地目欄のカッコ内の「現況」が空白の場合、status: "error" で指摘してください。（例：地目「宅地（　）」のように現況が空の場合）
+
+**6. 大字（だいじ）の認識**
+古い書類（地積測量図など）では改ざん防止のため「大字」が使われます。壱(1)、弐(2)、参(3)、肆(4)、伍(5)、陸(6)、漆/柒(7)、捌(8)、玖(9)、拾(10)、佰(100)、阡(1000)、萬(10000)を算用数字と同等に扱って照合してください。
+
+**7. 読み取り不能な漢字**
+- 画像から読み取れない漢字・判読不明な文字がある場合、status: "warning" で「〇〇の箇所で読み取れない漢字があります。目視確認を推奨します。」と指摘してください。
+
+**8. 5ページ目：⑥容積率の制限**
+- 前面道路幅員チェック欄が未チェックの場合、status: "error" で指摘してください。
+
+**9. 前面道路幅員が12m未満の場合の掛け率**
+- 住居系：道路幅員×40%。その他：道路幅員×60%。指定容積率と比較して小さい方が適用。矛盾があれば指摘してください。
+
+**10. 北側斜線制限・日影規制**
+- 各項目欄が空欄の場合、通常は斜線（／）が引かれます。斜線が入っていない場合は、status: "warning" で指摘してください。
+
+**11. ⑪敷地と道路との関係図**
+- 図または文章が入っていない場合、status: "error" で指摘してください。
+
+**12. Ⅲ　その他の事項の1　添付書類**
+- 根拠資料（先頭 {reference_count} 枚）に含まれる書類のうち、重説の「添付書類」に記載されていないものがあれば、status: "warning" で指摘してください。（例：上下水道敷地図、固定資産税・都市計画税納税通知書等）
 
 ---
 
@@ -88,7 +145,7 @@ VERIFY_PROMPT_TEMPLATE = """**【重要：業務遂行宣言】**
 あなたは細部にこだわる不動産契約の法務担当者です。
 
 **タスク:**
-提供された画像を「根拠資料（正）」と「チェック対象（案）」に分け、**まず添付資料の有無を判定し、その後に中身の数値照合**を行って不一致を指摘してください。
+提供された画像を「根拠資料（正）」と「チェック対象（案）」に分け、**①添付資料の有無を判定 → ②重要事項説明書のフォーム記載チェック（必須）→ ③中身の数値照合**の順で不一致を指摘してください。②のフォームチェックは省略禁止です。
 
 **画像の構成:**
 最初の {reference_count} 枚の画像が【根拠資料（正）】です。
@@ -112,7 +169,7 @@ VERIFY_PROMPT_TEMPLATE = """**【重要：業務遂行宣言】**
 
 上記ゲートで不足が判明した項目については、以降の数値照合・表記チェックでは「検証不可」として扱い、一致・不一致の判定は行わないでください。
 
-**トークン消費の抑制:** 添付資料が多数または完全に欠落している場合は、個別の数値照合（地積・住所・地番・建蔽率等）をスキップし、**資料不足・添付資料不足の報告のみ**に留めてください。無駄に長い応答を生成せず、先頭の重要指摘（不足一覧）だけを確実に返すことを優先します。
+**トークン消費の抑制:** 添付資料が多数または完全に欠落している場合は、個別の数値照合（地積・住所・地番・建蔽率等）をスキップし、**資料不足・添付資料不足の報告**に留めてください。**ただし、ステップ2のフォーム記載チェック（宅地建物取引士名・弊社情報・供託所・売る主・地目・容積率・敷地道路関係図・添付書類等）は、根拠資料の有無に関係なく必ず実行してください。** 無駄に長い応答を生成せず、重要指摘を確実に返すことを優先します。
 
 **チェック項目:**
 以下の項目を中心に、数値や固有名詞の一致を確認してください（資料完備性ゲートで不足と判明した項目を除く）。
@@ -391,7 +448,7 @@ VERIFY_PROMPT_TEMPLATE = """**【重要：業務遂行宣言】**
 - **box_2d / image_index:** null で可。
 
 **4. 出力の優先度:**
-「添付資料不足」は1件のみリストの先頭に出力し、続けて「資料不足」・照合結果（所在・地番・所有者等）を並べてください。
+「添付資料不足」は1件のみリストの先頭に出力し、続けて**フォーム記載チェックの指摘**（宅地建物取引士名・弊社情報・供託所・売る主・地目・容積率・敷地道路関係図・添付書類等）、さらに「資料不足」・照合結果（所在・地番・所有者等）を並べてください。
 
 **【証拠画像の範囲（box_2d・image_index）—必須】**
 画像を表示するために **box_2d** と **image_index** は必須項目です（資料不足・添付資料不足の場合は null 可）。不一致を見つけたら、必ずその箇所の座標を [ymin, xmin, ymax, xmax] の形式（例: [640, 170, 690, 930]）で含めてください。
@@ -399,7 +456,7 @@ VERIFY_PROMPT_TEMPLATE = """**【重要：業務遂行宣言】**
 - **image_index:** その箇所が含まれる画像の番号（0始まり）を**必ず**指定してください。先頭の {reference_count} 枚が根拠資料、続く {target_count} 枚が重要事項説明書です。
 
 **出力形式:**
-発見された不一致・指摘事項を以下のJSON形式で出力してください。**2ステップ構成に従い、ステップ1（添付資料不足・資料不足）をリストの先頭に1件にまとめて出力し、続けてステップ2（照合結果）を並べてください。** 一度に大量のテキストを出さず、各項目は簡潔に記載することでブロックを避けてください。
+発見された不一致・指摘事項を以下のJSON形式で出力してください。**3ステップ構成に従い、①添付資料不足（1件に集約）→ ②フォーム記載チェックの指摘（宅地建物取引士名・弊社情報・供託所・売る主・地目・容積率・敷地道路関係図・添付書類等）→ ③数値照合結果**の順で並べてください。**②のフォームチェックは必ず実行し、該当する指摘を出力してください。** 一度に大量のテキストを出さず、各項目は簡潔に記載することでブロックを避けてください。
 [
   {{
     "category": "添付資料不足",
@@ -410,6 +467,16 @@ VERIFY_PROMPT_TEMPLATE = """**【重要：業務遂行宣言】**
     "message": "以下の資料が不足しています：住宅地図、公図、ハザードマップ（水害・土砂災害等）、境界写真。",
     "box_2d": null,
     "image_index": null
+  }},
+  {{
+    "category": "宅地建物取引士",
+    "status": "error",
+    "item": "登録番号",
+    "evidence": "重説1ページ目",
+    "target": "登録番号欄が空白",
+    "message": "宅地建物取引士の登録番号が記載されていません。",
+    "box_2d": [120, 300, 160, 500],
+    "image_index": 5
   }},
   {{
     "category": "所在・地番",
@@ -496,20 +563,143 @@ VERIFY_PROMPT_TEMPLATE = """**【重要：業務遂行宣言】**
 
 status は "error"（値の不一致）、"warning"（表記ゆれ・要確認）、"suggestion"（アドバイス）のいずれかです。
 各要素には box_2d と image_index を含めてください（添付資料不足・資料不足の場合は null 可。その他の指摘は画像表示のため必ず指定）。
-**出力順序:** ステップ1の結果（添付資料不足・資料不足）を先頭にまとめ、続けてステップ2の結果（照合：所在・地番・所有者・法令上の制限等）を並べてください。簡潔な出力を心がけ、ブロックされないようにしてください。
+**出力順序:** ①添付資料不足（1件）→ ②フォーム記載チェック（宅地建物取引士名・弊社情報・供託所・売る主・地目・容積率・敷地道路関係図・添付書類等）→ ③数値照合（所在・地番・所有者・法令上の制限等）。**②のフォームチェックを省略しないでください。** 簡潔な出力を心がけ、ブロックされないようにしてください。
 一致・不足ともにない場合は、空のリスト `[]` を返してください。
 
 必ずJSON形式のリストのみを出力してください（Markdownの ```json 等は不要）。"""
 
 
+# フォーム記載チェック専用プロンプト（重説画像のみを渡すため、1ページ目=最初の画像で確実にチェック）
+FORM_CHECK_PROMPT_TEMPLATE = """**【重要事項説明書フォーム記載チェック】**（このチェックのみ実行。他は行わない。）
+
+**重要：以下の画像はすべて重要事項説明書です。** 1ページ目＝最初の画像、2ページ目＝2枚目…です。根拠資料は含まれていません。
+
+**【最優先・必須】宅地建物取引士名・登録番号の空欄チェック**
+**最初の画像（1ページ目）**に、宅地建物取引士の「氏名」と「登録番号」の記載欄がある。この欄を**必ず最初に確認**すること。
+- 氏名欄が空白・未記載・ハイフンやスペースのみ → status: "error" で「宅地建物取引士の氏名が記載されていません。」と指摘
+- 登録番号欄が空白・未記載・ハイフンやスペースのみ（例：「石狩 第23339号」のような形式で記載されているべき箇所が空）→ status: "error" で「宅地建物取引士の登録番号が記載されていません。」と指摘
+- 両方空白なら両方指摘。**このチェックをスキップしてはいけない。** 最初の画像を開き、氏名・登録番号の欄を特定してから判定すること。
+
+**【必須】供託所等に関する説明の照合**
+1ページ目に「供託所等に関する説明」の欄がある。以下と**1文字でも異なれば** status: "error" で指摘すること。
+- **宅地建物取引業保証協会の名称及び所在地:** 公益社団法人　全国宅地建物取引業保証協会、東京都千代田区岩本町２丁目６番３号
+- **所属地方本部の名称及び所在地:** 北海道本部、北海道札幌市白石区東札幌1条1-1-8、じょうてつビル
+- **弁済業務保証金の供託所及び所在地:** 東京法務局、東京都千代田区九段南１丁目１番15号
+上記以外の記載（別の法務局・別の本部・別の住所など）があれば必ず error で指摘。
+
+**その他のチェック項目:**
+2. **弊社の情報** 以下と異なれば error：住所=旭川市永山2条19丁目4番1号、TEL=0166-48-2349、株式会社杏栄、代表取締役 中村文彦、免許証番号=北海道知事 上川 (9) 第774号
+3. **売る主の表示欄** 「合計〇名」の〇が空白なら error
+4. **2ページ(1)土地欄の地目** カッコ内の現況が空白なら error
+5. **大字** 壱弐参肆伍陸漆捌玖拾佰阡萬を認識。算用数字と同等に照合
+6. **読み取り不能な漢字** 判読不明なら warning で指摘
+7. **5ページ⑥容積率** 前面道路幅員チェック欄が未チェックなら error
+8. **前面道路幅員12m未満** 住居系40%、その他60%。矛盾があれば指摘
+9. **北側斜線制限・日影規制** 空欄に斜線が入っていないなら warning
+10. **⑪敷地と道路との関係図** 図または文章がなければ error
+※添付書類の照合は別処理で行うため、本チェックでは11項目まで
+
+**出力時の注意:** 宅地建物取引士の氏名・登録番号が空白の場合、および供託所等の記載が上記と異なる場合は、**必ず**指摘を出力すること。該当なしの場合のみスキップ可。
+
+**出力形式（JSON配列のみ）:**
+宅地建物取引士の氏名・登録番号が空白の場合の出力例（1ページ目＝image_index 0）：
+{{"category": "宅地建物取引士", "status": "error", "item": "氏名", "evidence": "重説1ページ目", "target": "空白", "message": "宅地建物取引士の氏名が記載されていません。", "box_2d": [80,200,130,450], "image_index": 0}}
+{{"category": "宅地建物取引士", "status": "error", "item": "登録番号", "evidence": "重説1ページ目", "target": "空白", "message": "宅地建物取引士の登録番号が記載されていません。", "box_2d": [130,200,180,450], "image_index": 0}}
+
+供託所等の記載が異なる場合の出力例：
+{{"category": "供託所等", "status": "error", "item": "弁済業務保証金の供託所", "evidence": "正：東京法務局、東京都千代田区九段南１丁目１番15号", "target": "重説の記載が上記と異なる", "message": "供託所等に関する説明が弊社の正規の記載と異なります。東京法務局（東京都千代田区九段南１丁目１番15号）であることを確認してください。", "box_2d": [200,100,280,500], "image_index": 0}}
+
+※ image_index: 1ページ目=0、2ページ目=1…（0始まり）。box_2d は [ymin,xmin,ymax,xmax] 0-1000正規化。
+該当する指摘がなければ空のリスト [] を返してください。必ずJSON形式のリストのみを出力してください。"""
+
+
+def _parse_issues_json(response_text: str) -> list:
+    """AI応答のJSONをパースしてリストを返す。失敗時はJSONParseErrorを送出。"""
+    cleaned_text = (response_text or "").strip()
+    cleaned_text = cleaned_text.replace("```json", "").replace("```", "").strip()
+    lines = cleaned_text.split("\n")
+    cleaned_lines = [line for line in lines if line.strip() not in ("```", "```json", "```python")]
+    cleaned_text = "\n".join(cleaned_lines).strip()
+    if "[" in cleaned_text:
+        cleaned_text = re.sub(r"^.*?\[", "[", cleaned_text, count=1, flags=re.DOTALL)
+    text_before_rescue = cleaned_text.rstrip()
+    if text_before_rescue and not text_before_rescue.endswith("]"):
+        repaired = _rescue_incomplete_json_array(text_before_rescue)
+        cleaned_text = repaired if repaired is not None else (text_before_rescue + "]")
+    else:
+        cleaned_text = text_before_rescue
+    cleaned_text = re.sub(r",\s*]", "]", cleaned_text)
+    try:
+        issues = json.loads(cleaned_text)
+        return issues if isinstance(issues, list) else []
+    except json.JSONDecodeError:
+        if text_before_rescue and not text_before_rescue.endswith("]"):
+            repaired = _rescue_incomplete_json_array(text_before_rescue)
+            if repaired:
+                try:
+                    issues = json.loads(repaired)
+                    if isinstance(issues, list):
+                        return issues
+                except (json.JSONDecodeError, ValueError):
+                    pass
+        raise JSONParseError(
+            "AIからの応答のJSON解析に失敗しました。",
+            raw_response=response_text,
+        )
+
+
+def _run_form_check(api_key: str, reference_images: list, target_images: list, model_name: str = DEFAULT_MODEL) -> list[dict]:
+    """フォーム記載チェックのみを実行。重説画像のみを渡し、1ページ目=最初の画像で確実にチェックする。"""
+    # 重説画像のみを渡す（根拠資料が多いと重説が後ろに埋もれて検出されない問題を解消）
+    prompt = FORM_CHECK_PROMPT_TEMPLATE
+    content_parts = [prompt] + list(target_images)
+
+    try:
+        from google.generativeai.types import HarmCategory, HarmBlockThreshold
+        safety_settings = {
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        }
+    except (ImportError, AttributeError):
+        safety_settings = [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+        ]
+
+    model = genai.GenerativeModel(model_name, safety_settings=safety_settings)
+    response = model.generate_content(
+        content_parts,
+        generation_config=genai.types.GenerationConfig(
+            response_mime_type="application/json",
+            max_output_tokens=4096,
+        ),
+    )
+    if not response.candidates:
+        raise SafetyBlockError("フォームチェックがブロックされました。")
+    c0 = response.candidates[0]
+    finish_reason = getattr(c0, "finish_reason", None)
+    reason_ok = finish_reason in (1, "STOP", "stop") or (
+        finish_reason is not None and "STOP" in str(getattr(finish_reason, "name", str(finish_reason)))
+    )
+    if not reason_ok:
+        raise SafetyBlockError("フォームチェックがブロックされました。")
+    response_text = (response.text or "").strip()
+    if not response_text:
+        return []
+    return _parse_issues_json(response_text)
+
+
 def verify_disclosure_against_evidence(
-    api_key: str, reference_images: list, target_images: list
+    api_key: str, reference_images: list, target_images: list, model_name: str | None = None
 ) -> list[dict]:
     """
     Gemini 3.0 Pro で根拠資料と重要事項説明書を照合し、不一致のリストを返す。
 
-    注: ブロックされやすい場合は、添付資料チェックと数値照合を2段階に分けた
-    リクエスト構成（第1段階で資料完備性のみ、第2段階で照合）の利用を検討してください。
+    フォーム記載チェックは独立したAPI呼び出しで先に実行し、照合結果とマージして返す。
 
     Args:
         api_key: Google Gemini API キー
@@ -543,13 +733,36 @@ def verify_disclosure_against_evidence(
         raise ValueError("チェック対象の画像がありません")
 
     genai.configure(api_key=api_key.strip())
-    # max_output_tokens=8192 はAPIの最大値。長い解析結果の途切れを防ぐ
+
+    model = model_name or DEFAULT_MODEL
+    # 第1段階: フォーム記載チェック（重説画像のみを渡して確実に実行）
+    form_issues: list[dict] = []
+    try:
+        form_issues = _run_form_check(api_key, reference_images, target_images, model)
+        # フォームチェックは重説のみを渡しているため image_index は 0,1,2...。マージ時に根拠資料の枚数を加算
+        ref_count = len(reference_images)
+        for issue in form_issues:
+            idx = issue.get("image_index")
+            if idx is not None and isinstance(idx, (int, float)):
+                issue["image_index"] = int(idx) + ref_count
+    except (SafetyBlockError, JSONParseError):
+        # フォームチェック失敗時は警告として1件追加し、照合は続行
+        form_issues = [{
+            "category": "フォームチェック",
+            "status": "warning",
+            "item": "実行エラー",
+            "evidence": "",
+            "target": "",
+            "message": "フォーム記載チェックの実行に失敗しました。照合結果のみ表示しています。",
+            "box_2d": None,
+            "image_index": None,
+        }]
+
+    # 第2段階: 添付資料・数値照合（メインAPI呼び出し）
     generation_config = genai.types.GenerationConfig(
         response_mime_type="application/json",
         max_output_tokens=8192,
     )
-
-    # プロンプトに画像枚数を埋め込む
     verify_prompt = VERIFY_PROMPT_TEMPLATE.format(
         reference_count=len(reference_images),
         target_count=len(target_images),
@@ -576,10 +789,9 @@ def verify_disclosure_against_evidence(
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
         ]
 
-    # Gemini 3.0 Pro を使用（Paid Tier対応、マルチモーダル・推論性能が最高位）
-    model_name = "models/gemini-3-pro-preview"
-    model = genai.GenerativeModel(model_name, safety_settings=safety_settings)
-    response = model.generate_content(
+    # マルチモーダル対応モデル（デフォルト: gemini-2.0-flash 無料枠あり）
+    gen_model = genai.GenerativeModel(model, safety_settings=safety_settings)
+    response = gen_model.generate_content(
         content_parts,
         generation_config=generation_config,
     )
@@ -602,8 +814,8 @@ def verify_disclosure_against_evidence(
 
     response_text = (response.text or "").strip()
     if not response_text:
-        # 空の応答の場合は空のリストを返す
-        return []
+        # 空の応答でもフォームチェック結果は返す
+        return form_issues
 
     # Markdown記法を削除（```json、```、```python など様々なパターンに対応）
     cleaned_text = response_text
@@ -632,8 +844,7 @@ def verify_disclosure_against_evidence(
     try:
         issues = json.loads(cleaned_text)
         if not isinstance(issues, list):
-            return []
-        return issues
+            return form_issues
     except json.JSONDecodeError:
         # 再試行: レスキュー関数で別の切り詰め候補を試す
         if text_before_rescue and not text_before_rescue.endswith("]"):
@@ -642,20 +853,36 @@ def verify_disclosure_against_evidence(
                 try:
                     issues = json.loads(repaired)
                     if isinstance(issues, list):
-                        return issues
+                        pass
+                    else:
+                        issues = []
                 except (json.JSONDecodeError, ValueError):
-                    pass
-        last_brace_comma = cleaned_text.rfind("},")
-        if last_brace_comma != -1:
-            try:
-                truncated = cleaned_text[: last_brace_comma + 1] + "]"
-                truncated = re.sub(r",\s*]", "]", truncated)
-                issues = json.loads(truncated)
-                if isinstance(issues, list):
-                    return issues
-            except (json.JSONDecodeError, ValueError):
-                pass
-        raise JSONParseError(
-            "AIからの応答のJSON解析に失敗しました。応答が途切れているか、形式が不正です。",
-            raw_response=response_text,
-        )
+                    issues = None
+            else:
+                issues = None
+        else:
+            issues = None
+        if issues is None:
+            last_brace_comma = cleaned_text.rfind("},")
+            if last_brace_comma != -1:
+                try:
+                    truncated = cleaned_text[: last_brace_comma + 1] + "]"
+                    truncated = re.sub(r",\s*]", "]", truncated)
+                    issues = json.loads(truncated)
+                    if not isinstance(issues, list):
+                        issues = []
+                except (json.JSONDecodeError, ValueError):
+                    raise JSONParseError(
+                        "AIからの応答のJSON解析に失敗しました。応答が途切れているか、形式が不正です。",
+                        raw_response=response_text,
+                    )
+            else:
+                raise JSONParseError(
+                    "AIからの応答のJSON解析に失敗しました。応答が途切れているか、形式が不正です。",
+                    raw_response=response_text,
+                )
+
+    # 結果のマージ: 添付資料不足 → フォームチェック → その他（数値照合等）
+    attachment_items = [i for i in issues if i.get("category") in ("添付資料不足", "資料不足")]
+    other_items = [i for i in issues if i.get("category") not in ("添付資料不足", "資料不足")]
+    return attachment_items + form_issues + other_items

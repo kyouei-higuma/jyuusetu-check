@@ -43,7 +43,8 @@ def pdf_to_images(file_stream: bytes | BinaryIO) -> list[str]:
     try:
         for page_index in range(len(doc)):
             page = doc[page_index]
-            mat = fitz.Matrix(150 / 72, 150 / 72)
+            # 200 DPI: フォームの細かい文字（宅地建物取引士名・登録番号等）を確実に読み取るため
+            mat = fitz.Matrix(200 / 72, 200 / 72)
             pix = page.get_pixmap(matrix=mat, alpha=False)
             images_b64.append(_pixmap_to_jpeg_b64(pix))
     finally:
