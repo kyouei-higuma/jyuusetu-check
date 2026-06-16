@@ -395,6 +395,42 @@ with st.sidebar:
 
     st.divider()
 
+    # AIモデルの選択肢
+    MODEL_OPTIONS = {
+        "Gemini 3.5 Flash (推奨・標準)": "models/gemini-3.5-flash",
+        "Gemini 3.1 Pro (超高精度・最高峰)": "models/gemini-3.1-pro",
+        "Gemini 3.1 Flash-Lite (高速・軽量)": "models/gemini-3.1-flash-lite",
+        "Gemini 2.5 Pro (前世代・高精度)": "models/gemini-2.5-pro",
+        "Gemini 2.5 Flash (前世代・標準)": "models/gemini-2.5-flash",
+    }
+
+    # デフォルトの選択肢を Secrets 等から決定
+    default_model_code = "models/gemini-3.5-flash"
+    try:
+        default_model_code = st.secrets.get("GEMINI_MODEL", "models/gemini-3.5-flash")
+    except (AttributeError, KeyError, FileNotFoundError):
+        pass
+
+    # 存在しないモデル名が指定されていた場合の安全対策
+    if default_model_code not in MODEL_OPTIONS.values():
+        default_model_code = "models/gemini-3.5-flash"
+
+    default_index = list(MODEL_OPTIONS.values()).index(default_model_code)
+
+    selected_model_name = st.selectbox(
+        "AIモデルの選択",
+        options=list(MODEL_OPTIONS.keys()),
+        index=default_index,
+        help="書類の解析に使用するAIモデルを選択します。\n\n"
+             "• Gemini 3.5 Flash: 最新世代の標準モデル。速度、コスト、精度のバランスが最も優れています。\n"
+             "• Gemini 3.1 Pro: 最新世代の最上位モデル。極めて高い推論能力を持ち、緻密な照合が可能です。\n"
+             "• Gemini 3.1 Flash-Lite: 高速処理と軽量化に特化したモデルです。\n"
+             "• Gemini 2.5 Pro / Flash: 前世代のモデルです。",
+    )
+    gemini_model = MODEL_OPTIONS[selected_model_name]
+
+    st.divider()
+
     # セーフティブロック対策：画像量を制限するオプション
     use_light_mode = st.checkbox(
         "簡易モード（画像量を制限）",
@@ -406,7 +442,7 @@ with st.sidebar:
     st.divider()
 
     st.caption("※ PDFは画像としてGeminiで解析します。スキャンPDFも利用できます。")
-    st.caption("※ デフォルトは gemini-2.5-flash（無料枠あり）。Secrets の GEMINI_MODEL で変更可。")
+    st.caption("※ AIモデルはいつでも切り替え可能です。")
 
 # ---------- メインエリア ----------
 st.title("📄 重要事項説明書 クロスチェック")
@@ -496,13 +532,9 @@ if st.session_state.get("process_started", False):
     if st.session_state.get("light_mode", False):
         st.info("📌 簡易モード：根拠資料・重説それぞれ最大5ページまで送信しています。")
 
-    # 使用モデル（Secrets の GEMINI_MODEL で上書き可。gemini-3-pro は無料枠なしのため 429 回避でフォールバック）
-    try:
-        gemini_model = st.secrets.get("GEMINI_MODEL", "models/gemini-2.5-flash")
-    except (AttributeError, KeyError, FileNotFoundError):
-        gemini_model = "models/gemini-2.5-flash"
-    if "gemini-3" in str(gemini_model).lower():
-        gemini_model = "models/gemini-2.5-flash"  # 無料枠なしモデルは 429 になるため強制フォールバック
+    # 使用モデルの確定（サイドバーで選択されたモデルを使用）
+    if "gemini_model" not in locals() and "gemini_model" not in globals():
+        gemini_model = "models/gemini-3.5-flash"
 
     # Geminiで照合チェック（フォームチェック → 添付資料・数値照合の2段階）
     with st.spinner("フォームチェックと照合を実行中..."):
