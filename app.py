@@ -48,10 +48,6 @@ st.set_page_config(
 # ---------- 画面表示のカスタマイズ（ロゴ・フッター等の非表示） ----------
 hide_style = """
     <style>
-    /* 右下の王冠マークや「Manage App」「Hosted with Streamlit」ボタンを非表示にする */
-    [class*="viewerBadge"], [data-testid="stViewerBadge"] {
-        display: none !important;
-    }
     /* メニュー、ヘッダー、フッターを非表示にする */
     #MainMenu {visibility: hidden !important;}
     footer {visibility: hidden !important;}
@@ -59,6 +55,45 @@ hide_style = """
     </style>
 """
 st.markdown(hide_style, unsafe_allow_html=True)
+
+# Streamlit Community Cloud の外枠（親DOM）にある「Hosted with Streamlit（王冠）」や「Created by（アバター）」を非表示にする
+from streamlit.components.v1 import html
+html("""
+<script>
+    const hideParentElements = () => {
+        const topDoc = window.top.document;
+        
+        // 1. Streamlitへのリンク（王冠マーク）を持つaタグを全て非表示
+        topDoc.querySelectorAll('a[href*="streamlit.io"]').forEach(el => {
+            el.style.setProperty('display', 'none', 'important');
+        });
+        
+        // 2. 作成者プロフィールへのリンク（丸いアバターなど）を持つaタグを全て非表示
+        topDoc.querySelectorAll('a[href*="share.streamlit.io"]').forEach(el => {
+            el.style.setProperty('display', 'none', 'important');
+        });
+
+        // 3. 王冠マークやプロフィールアイコンを包んでいる、右下の固定コンテナ自体を非表示
+        // それらのリンク要素から親を辿り、position: fixed になっている外枠コンテナごと非表示にします
+        const badge = topDoc.querySelector('a[href*="streamlit.io"]') || topDoc.querySelector('a[href*="share.streamlit.io"]');
+        if (badge) {
+            let parent = badge.parentElement;
+            while (parent && parent !== topDoc.body) {
+                const style = window.getComputedStyle(parent);
+                if (style.position === 'fixed') {
+                    parent.style.setProperty('display', 'none', 'important');
+                    break;
+                }
+                parent = parent.parentElement;
+            }
+        }
+    };
+    
+    // 即時実行と、Streamlit Cloudの遅延読み込みに対応するための定期実行
+    hideParentElements();
+    setInterval(hideParentElements, 500);
+</script>
+""", height=0, width=0)
 
 # ---------- サイドバー ----------
 with st.sidebar:
