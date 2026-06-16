@@ -45,6 +45,21 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ---------- 画面表示のカスタマイズ（ロゴ・フッター等の非表示） ----------
+hide_style = """
+    <style>
+    /* 右下の王冠マークや「Manage App」「Hosted with Streamlit」ボタンを非表示にする */
+    [class*="viewerBadge"], [data-testid="stViewerBadge"] {
+        display: none !important;
+    }
+    /* メニュー、ヘッダー、フッターを非表示にする */
+    #MainMenu {visibility: hidden !important;}
+    footer {visibility: hidden !important;}
+    header {visibility: hidden !important;}
+    </style>
+"""
+st.markdown(hide_style, unsafe_allow_html=True)
+
 # ---------- サイドバー ----------
 with st.sidebar:
     st.header("設定")
