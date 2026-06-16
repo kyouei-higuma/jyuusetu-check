@@ -19,6 +19,16 @@ from PIL import Image
 from src.ai_extractor import JSONParseError, SafetyBlockError, verify_disclosure_against_evidence
 from src.pdf_reader import pdf_to_images
 from src.utils import crop_evidence_region
+from src.auth import (
+    authenticate,
+    change_password,
+    get_all_users,
+    add_user,
+    set_user_active,
+    reset_user_password,
+    delete_user,
+)
+from src.history import save_history, load_all_history, delete_history
 
 
 def _normalize_box_2d(box_2d):  # noqa: ANN201
@@ -95,8 +105,271 @@ html("""
 </script>
 """, height=0, width=0)
 
+# ── ログイン認証 ──────────────────────────────────────────────────
+def _show_login_page():
+    """ログイン画面を表示し、認証が通るまでアプリ本体を表示しない"""
+    st.markdown("""
+    <style>
+    .login-container {
+        max-width: 420px;
+        margin: 6rem auto 0 auto;
+        background: #fff;
+        border-radius: 12px;
+        padding: 2.5rem 2.5rem 2rem 2.5rem;
+        box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+    }
+    .login-title {
+        text-align: center;
+        color: #1a5276;
+        font-size: 1.5rem;
+        font-weight: bold;
+        margin-bottom: 0.3rem;
+    }
+    .login-sub {
+        text-align: center;
+        color: #888;
+        font-size: 0.9rem;
+        margin-bottom: 1.5rem;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div class="login-container">', unsafe_allow_html=True)
+    st.markdown('<div class="login-title">📄 重説クロスチェックシステム</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-sub">社員ログイン</div>', unsafe_allow_html=True)
+
+    with st.form("login_form"):
+        user_id = st.text_input("ユーザーID", placeholder="例: tanaka")
+        password = st.text_input("パスワード", type="password", placeholder="パスワードを入力")
+        submitted = st.form_submit_button("ログイン", use_container_width=True)
+
+    if submitted:
+        ok, user_info, msg = authenticate(user_id, password)
+        if ok:
+            st.session_state["logged_in"] = True
+            st.session_state["current_user"] = user_info
+            st.rerun()
+        else:
+            st.error(msg)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+def _show_change_password_page():
+    """初回ログイン時のパスワード変更画面"""
+    user = st.session_state["current_user"]
+    st.markdown(f"### パスワード変更（{user['name']} さん）")
+    st.info("初回ログインです。新しいパスワードを設定してください（6文字以上）。")
+
+    with st.form("change_pw_form"):
+        new_pw = st.text_input("新しいパスワード", type="password")
+        new_pw2 = st.text_input("新しいパスワード（確認）", type="password")
+        submitted = st.form_submit_button("パスワードを変更する", use_container_width=True)
+
+    if submitted:
+        if new_pw != new_pw2:
+            st.error("パスワードが一致しません。")
+        else:
+            ok, msg = change_password(user["user_id"], "", new_pw)
+            if ok:
+                st.session_state["current_user"]["must_change_password"] = False
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
+
+
+# セッションステートでログイン状態を管理
+if "logged_in" not in st.session_state:
+    st.session_state["logged_in"] = False
+if "current_user" not in st.session_state:
+    st.session_state["current_user"] = None
+
+# 未ログインならログイン画面だけ表示してここで停止
+if not st.session_state["logged_in"]:
+    _show_login_page()
+    st.stop()
+
+# 初回ログイン時はパスワード変更画面
+if st.session_state["current_user"].get("must_change_password"):
+    _show_change_password_page()
+    st.stop()
+
 # ---------- サイドバー ----------
 with st.sidebar:
+    # ── ログインユーザー情報 ───────────────────────────────────
+    _cur = st.session_state["current_user"]
+    st.markdown(f"**ログイン中:** {_cur['name']}")
+    if st.button("ログアウト", use_container_width=True):
+        st.session_state["logged_in"] = False
+        st.session_state["current_user"] = None
+        st.rerun()
+
+    # パスワード変更
+    with st.expander("🔑 パスワード変更"):
+        with st.form("sidebar_pw_change"):
+            _old_pw = st.text_input("現在のパスワード", type="password", key="spw_old")
+            _new_pw = st.text_input("新しいパスワード（6文字以上）", type="password", key="spw_new")
+            _new_pw2 = st.text_input("新しいパスワード（確認）", type="password", key="spw_new2")
+            _pw_submit = st.form_submit_button("変更する")
+        if _pw_submit:
+            if _new_pw != _new_pw2:
+                st.error("パスワードが一致しません。")
+            else:
+                _ok, _msg = change_password(_cur["user_id"], _old_pw, _new_pw)
+                if _ok:
+                    st.success(_msg)
+                else:
+                    st.error(_msg)
+
+    # ── 管理者専用：ユーザー管理 ──────────────────────────────
+    if _cur.get("role") == "admin":
+        with st.expander("👥 ユーザー管理（管理者）"):
+            st.markdown("**社員一覧**")
+            _all_users = get_all_users()
+            for _uid, _udata in _all_users.items():
+                _active = _udata.get("active", True)
+                _status = "✅ 有効" if _active else "❌ 無効"
+                
+                # 社員ごとの表示カード
+                st.markdown(f"---")
+                st.markdown(f"**{_udata.get('name', _uid)}** (`{_uid}`)  {_status}")
+                
+                if _uid != _cur["user_id"]:  # 自分自身は操作不可
+                    col1, col2, col3 = st.columns([1, 1, 1])
+                    
+                    # 有効化 / 無効化ボタン
+                    _btn_label = "無効化" if _active else "有効化"
+                    if col1.button(_btn_label, key=f"toggle_{_uid}", use_container_width=True):
+                        _ok, _msg = set_user_active(_uid, not _active)
+                        if _ok:
+                            st.success(_msg)
+                            st.rerun()
+                        else:
+                            st.error(_msg)
+                            
+                    # パスワードリセットボタン
+                    with col2:
+                        with st.popover("🔑 リセット", use_container_width=True):
+                            st.markdown(f"**{_udata.get('name', _uid)}** のパスワードをリセットします。")
+                            _temp_pw = st.text_input("仮パスワード（6文字以上）", value="123456", key=f"temp_pw_{_uid}")
+                            if st.button("リセットを確定", key=f"reset_btn_{_uid}", type="primary", use_container_width=True):
+                                _ok, _msg = reset_user_password(_uid, _temp_pw)
+                                if _ok:
+                                    st.success(_msg)
+                                    st.rerun()
+                                else:
+                                    st.error(_msg)
+                                    
+                    # 削除ボタン
+                    with col3:
+                        with st.popover("🗑️ 削除", use_container_width=True):
+                            st.markdown(f"⚠️ **{_udata.get('name', _uid)}** を完全に削除しますか？この操作は元に戻せません。")
+                            if st.button("削除を確定", key=f"del_btn_{_uid}", type="primary", use_container_width=True):
+                                _ok, _msg = delete_user(_uid)
+                                if _ok:
+                                    st.success(_msg)
+                                    st.rerun()
+                                else:
+                                    st.error(_msg)
+
+            st.markdown("---")
+            st.markdown("**新しい社員を追加**")
+            with st.form("add_user_form"):
+                _new_uid = st.text_input("ユーザーID（半角英数字）", placeholder="例: tanaka")
+                _new_name = st.text_input("氏名", placeholder="例: 田中 花子")
+                _new_init_pw = st.text_input("初期パスワード（6文字以上）", type="password")
+                _new_role = st.selectbox("権限", ["staff", "admin"])
+                _add_submit = st.form_submit_button("追加する")
+            if _add_submit:
+                _ok, _msg = add_user(_new_uid, _new_name, _new_init_pw, _new_role)
+                if _ok:
+                    st.success(_msg)
+                    st.rerun()
+                else:
+                    st.error(_msg)
+
+        # ── 管理者専用：利用履歴・精度チェック ──────────────────────
+        with st.expander("📊 利用履歴・精度チェック（管理者）"):
+            st.markdown("**社員のシステム利用履歴**")
+            _history_list = load_all_history()
+            if not _history_list:
+                st.info("利用履歴はまだありません。")
+            else:
+                for _hist in _history_list:
+                    _h_id = _hist["id"]
+                    _time = _hist["timestamp"]
+                    _uname = _hist["user_name"]
+                    _ref_files = _hist.get("reference_files", [])
+                    _t_file = _hist.get("target_file", "")
+                    _issues = _hist.get("issues", [])
+                    
+                    _error_count = sum(1 for issue in _issues if issue.get("status") == "error")
+                    _warn_count = sum(1 for issue in _issues if issue.get("status") in ("warning", "suggestion"))
+                    
+                    # 履歴カード
+                    st.markdown(f"---")
+                    col1, col2 = st.columns([3, 1])
+                    col1.markdown(f"📅 **{_time}** | 👤 **{_uname}**")
+                    col1.markdown(f"結果: 🔴 エラー **{_error_count}**件 | 🟡 警告等 **{_warn_count}**件")
+                    col1.caption(f"根拠資料: {', '.join(_ref_files)}")
+                    col1.caption(f"重要事項説明書: {_t_file}")
+                    
+                    # 履歴の削除ボタン
+                    if col2.button("履歴削除", key=f"del_hist_{_h_id}", use_container_width=True):
+                        if delete_history(_h_id):
+                            st.success("履歴を削除しました。")
+                            st.rerun()
+                            
+                    # 詳細アコーディオン
+                    with st.expander("🔍 指摘事項と資料の詳細"):
+                        tab_data, tab_files = st.tabs(["📝 指摘事項一覧", "📂 添付資料"])
+                        
+                        with tab_data:
+                            if not _issues:
+                                st.success("指摘事項はありませんでした。")
+                            else:
+                                for _idx, _issue in enumerate(_issues):
+                                    _cat = _issue.get("category", "")
+                                    _stat = _issue.get("status", "warning")
+                                    _item = _issue.get("item", "")
+                                    _ev = _issue.get("evidence", "")
+                                    _tg = _issue.get("target", "")
+                                    _msg = _issue.get("message", "")
+                                    
+                                    _icon = "🔴" if _stat == "error" else ("💡" if _stat == "suggestion" else "🟡")
+                                    st.markdown(f"**{_icon} [{_cat}] {_item}**")
+                                    st.write(f"指摘: {_msg}")
+                                    st.caption(f"根拠資料（正）: {_ev}")
+                                    st.caption(f"重要事項説明書（案）: {_tg}")
+                                    if _idx < len(_issues) - 1:
+                                        st.divider()
+                            
+                        with tab_files:
+                            st.markdown("📄 **読み込ませた資料データ (PDF)**")
+                            _saved_pdfs = _hist.get("saved_pdfs", [])
+                            if not _saved_pdfs:
+                                st.info("保存された資料データはありません。")
+                            else:
+                                # history_dir からPDFファイルを読み込んでダウンロードボタンを設置
+                                _h_dir = Path(__file__).resolve().parent / "data" / "history" / "pdfs" / _h_id
+                                for _pdf_name in _saved_pdfs:
+                                    _pdf_path = _h_dir / _pdf_name
+                                    if _pdf_path.exists():
+                                        try:
+                                            with open(_pdf_path, "rb") as _f:
+                                                _pdf_bytes = _f.read()
+                                            st.download_button(
+                                                label=f"📥 {_pdf_name} をダウンロード",
+                                                data=_pdf_bytes,
+                                                file_name=_pdf_name,
+                                                key=f"dl_pdf_{_h_id}_{_pdf_name}"
+                                            )
+                                        except Exception as _e:
+                                            st.error(f"ファイル読み込みエラー: {_e}")
+                                    else:
+                                        st.warning(f"⚠️ ファイルが見つかりません: {_pdf_name}")
+
     st.header("設定")
 
     # Streamlit Secrets から API キーを優先取得（Streamlit Cloud デプロイ対応）
@@ -181,9 +454,11 @@ if reference_files and target_file:
 if st.session_state.get("process_started", False):
     # 根拠資料の画像化
     reference_images_all = []
+    analyzed_pdfs = []
     try:
         for ref_file in reference_files:
             content = ref_file.read()
+            analyzed_pdfs.append({"name": ref_file.name, "bytes": content})
             images_b64 = pdf_to_images(io.BytesIO(content))
             pil_images = [
                 Image.open(io.BytesIO(base64.b64decode(b64))) for b64 in images_b64
@@ -197,6 +472,7 @@ if st.session_state.get("process_started", False):
     target_images_all = []
     try:
         content = target_file.read()
+        analyzed_pdfs.append({"name": target_file.name, "bytes": content})
         images_b64 = pdf_to_images(io.BytesIO(content))
         target_images_all = [
             Image.open(io.BytesIO(base64.b64decode(b64))) for b64 in images_b64
@@ -236,6 +512,21 @@ if st.session_state.get("process_started", False):
                 issues = verify_disclosure_against_evidence(
                     gemini_api_key, reference_images_all, target_images_all, model_name=gemini_model
                 )
+                
+                # 履歴を保存
+                try:
+                    cur_user = st.session_state.get("current_user", {"user_id": "unknown", "name": "不明"})
+                    save_history(
+                        user_id=cur_user["user_id"],
+                        user_name=cur_user["name"],
+                        reference_file_names=[f.name for f in reference_files],
+                        target_file_name=target_file.name,
+                        issues=issues,
+                        analyzed_pdfs=analyzed_pdfs
+                    )
+                except Exception as hist_err:
+                    logging.error(f"履歴の保存に失敗しました: {hist_err}")
+                
                 break
             except SafetyBlockError:
                 if attempt == 0:

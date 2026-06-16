@@ -25,3 +25,6 @@ Thumbs.db
 # ログ・一時ファイル
 *.log
 *.tmp
+
+# 利用履歴データ（機密情報の漏洩を防ぐためGit管理外にする）
+data/history/

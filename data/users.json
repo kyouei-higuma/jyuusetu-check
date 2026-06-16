@@ -1,0 +1,66 @@
+{
+  "_comment": "ユーザー管理ファイル。退社した社員は active を false に変更してください。",
+  "admin": {
+    "name": "管理者",
+    "password_hash": "3471cd9b8eb5012159902abf220be949e991eb094fd12584d76a5392e8021a9e",
+    "active": true,
+    "must_change_password": false,
+    "role": "admin"
+  },
+  "ayahiko.nakamura": {
+    "name": "中村　文彦",
+    "password_hash": "37ae240244f300205edbbae2d790fa76351668469f9f37c968536b7843272a35",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
+  },
+  "yuka.nakamura": {
+    "name": "中村　友香",
+    "password_hash": "37ae240244f300205edbbae2d790fa76351668469f9f37c968536b7843272a35",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
+  },
+  "takahiro.anzai": {
+    "name": "安斉　貴大",
+    "password_hash": "37ae240244f300205edbbae2d790fa76351668469f9f37c968536b7843272a35",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
+  },
+  "chikako.watabiki": {
+    "name": "綿引　寛子",
+    "password_hash": "37ae240244f300205edbbae2d790fa76351668469f9f37c968536b7843272a35",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
+  },
+  "mina.shibata": {
+    "name": "柴田　三奈",
+    "password_hash": "37ae240244f300205edbbae2d790fa76351668469f9f37c968536b7843272a35",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
+  },
+  "tatsuya.nishiwaki": {
+    "name": "西脇　達矢",
+    "password_hash": "37ae240244f300205edbbae2d790fa76351668469f9f37c968536b7843272a35",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
+  },
+  "kendall.bharath": {
+    "name": "kendall bharath",
+    "password_hash": "37ae240244f300205edbbae2d790fa76351668469f9f37c968536b7843272a35",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
+  },
+  "bigbeat.higuma": {
+    "name": "日隈　利穂",
+    "password_hash": "42337d45e7f1c1f204279b942a781b2b35b62b1a8d0b284e365063063544e3b7",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
+  }
+}
