@@ -58,15 +58,17 @@ st.set_page_config(
 # ---------- 画面表示のカスタマイズ（ロゴ・フッター等の非表示） ----------
 hide_style = """
     <style>
-    /* メニュー、ヘッダー、フッターを非表示にする */
+    /* メニュー、ヘッダー、フッター、デプロイボタンを非表示にする */
     #MainMenu {visibility: hidden !important;}
     footer {visibility: hidden !important;}
     header {visibility: hidden !important;}
+    #stDeployButton {display: none !important;}
+    [data-testid="stDeployButton"] {display: none !important;}
     </style>
 """
 st.markdown(hide_style, unsafe_allow_html=True)
 
-# Streamlit Community Cloud の外枠（親DOM）にある「Hosted with Streamlit（王冠）」や「Created by（アバター）」を非表示にする
+# Streamlit Community Cloud の外枠（親DOM）にある「Hosted with Streamlit（王冠）」や「Created by（アバター）」、「Manage app」を非表示にする
 from streamlit.components.v1 import html
 html("""
 <script>
@@ -97,6 +99,39 @@ html("""
                 parent = parent.parentElement;
             }
         }
+
+        // 4. "Manage app" ボタン（デプロイボタンや管理用ツールバー）を非表示にする
+        // iframe内と親DOMの両方で #stDeployButton や data-testid="stDeployButton" を非表示にする
+        const hideDeployButtons = (doc) => {
+            doc.querySelectorAll('#stDeployButton, [data-testid="stDeployButton"]').forEach(el => {
+                el.style.setProperty('display', 'none', 'important');
+            });
+        };
+        hideDeployButtons(document);
+        hideDeployButtons(topDoc);
+
+        // 親DOM内で "Manage app" のテキストを持つ要素を検索して非表示にする
+        const findAndHideByText = (doc, text) => {
+            const xpath = `//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '${text.toLowerCase()}')]`;
+            const result = doc.evaluate(xpath, doc, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+            for (let i = 0; i < result.snapshotLength; i++) {
+                const el = result.snapshotItem(i);
+                let target = el;
+                while (target && target !== doc.body) {
+                    const tagName = target.tagName;
+                    const isFixed = window.getComputedStyle(target).position === 'fixed';
+                    if (tagName === 'BUTTON' || tagName === 'A' || isFixed) {
+                        target.style.setProperty('display', 'none', 'important');
+                        break;
+                    }
+                    target = target.parentElement;
+                }
+                if (!target) {
+                    el.style.setProperty('display', 'none', 'important');
+                }
+            }
+        };
+        findAndHideByText(topDoc, 'Manage app');
     };
     
     // 即時実行と、Streamlit Cloudの遅延読み込みに対応するための定期実行
