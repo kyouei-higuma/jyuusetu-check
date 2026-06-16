@@ -357,8 +357,8 @@ with st.sidebar:
                             st.rerun()
                             
                     # 詳細アコーディオン
-                    with st.expander("🔍 指摘事項と資料の詳細"):
-                        tab_data, tab_files = st.tabs(["📝 指摘事項一覧", "📂 添付資料"])
+                    with st.expander("🔍 照合データと実行ログの詳細"):
+                        tab_data, tab_raw, tab_files = st.tabs(["📝 指摘事項一覧", "🤖 AIの生の応答 (JSON)", "📂 添付資料"])
                         
                         with tab_data:
                             if not _issues:
@@ -379,6 +379,10 @@ with st.sidebar:
                                     st.caption(f"重要事項説明書（案）: {_tg}")
                                     if _idx < len(_issues) - 1:
                                         st.divider()
+                                        
+                        with tab_raw:
+                            st.markdown("**AIから返された生の指摘データ (JSON):**")
+                            st.json(_issues)
                             
                         with tab_files:
                             st.markdown("📄 **読み込ませた資料データ (PDF)**")
@@ -694,6 +698,31 @@ if st.session_state.get("process_started", False):
                     else:
                         # box_2d が無い／パースできなかった場合も元画像を小さく表示
                         st.image(source_img, caption="指摘箇所の画像（座標なし）", use_container_width=True)
+
+        # ── 照合データと実行ログの詳細（チェック実行直後の表示用） ──
+        st.divider()
+        with st.expander("🔍 照合データと実行ログの詳細"):
+            tab_raw, tab_files = st.tabs(["🤖 AIの生の応答 (JSON)", "📂 添付資料"])
+            
+            with tab_raw:
+                st.markdown("**AIから返された生の指摘データ (JSON):**")
+                st.json(issues)
+                
+            with tab_files:
+                st.markdown("📄 **読み込ませた資料データ (PDF)**")
+                for ref_file in reference_files:
+                    st.download_button(
+                        label=f"📥 {ref_file.name} をダウンロード",
+                        data=ref_file.getvalue(),
+                        file_name=ref_file.name,
+                        key=f"dl_current_ref_{ref_file.name}"
+                    )
+                st.download_button(
+                    label=f"📥 {target_file.name} をダウンロード",
+                    data=target_file.getvalue(),
+                    file_name=target_file.name,
+                    key=f"dl_current_target_{target_file.name}"
+                )
 
     # 処理完了後、フラグをリセット
     st.session_state["process_started"] = False
