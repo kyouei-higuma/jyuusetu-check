@@ -118,16 +118,6 @@ def get_all_users() -> dict:
     return _load_users()
 
 
-def export_users_json() -> str:
-    """users.json の現在の内容を文字列として返す（管理者用ダウンロード）"""
-    if _USERS_FILE.exists():
-        return _USERS_FILE.read_text(encoding="utf-8")
-    users = _load_users()
-    comment = "ユーザー管理ファイル。退社した社員は active を false に変更してください。"
-    output = {"_comment": comment, **users}
-    return json.dumps(output, ensure_ascii=False, indent=2)
-
-
 def add_user(user_id: str, name: str, initial_password: str, role: str = "staff") -> tuple[bool, str]:
     """
     新しいユーザーを追加する（管理者用）。

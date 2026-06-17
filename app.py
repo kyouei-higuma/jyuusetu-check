@@ -23,13 +23,22 @@ from src.auth import (
     authenticate,
     change_password,
     get_all_users,
-    export_users_json,
     add_user,
     set_user_active,
     reset_user_password,
     delete_user,
 )
 from src.history import save_history, load_all_history, delete_history
+
+
+def _export_users_json_content() -> str:
+    """users.json の現在の内容を文字列として返す（管理者用ダウンロード）"""
+    users_file = Path(__file__).resolve().parent / "data" / "users.json"
+    if users_file.exists():
+        return users_file.read_text(encoding="utf-8")
+    users = get_all_users()
+    comment = "ユーザー管理ファイル。退社した社員は active を false に変更してください。"
+    return json.dumps({"_comment": comment, **users}, ensure_ascii=False, indent=2)
 
 
 def _normalize_box_2d(box_2d):  # noqa: ANN201
@@ -333,7 +342,7 @@ with st.sidebar:
             )
             st.download_button(
                 label="📥 users.json をダウンロード",
-                data=export_users_json().encode("utf-8"),
+                data=_export_users_json_content().encode("utf-8"),
                 file_name="users.json",
                 mime="application/json",
                 use_container_width=True,
