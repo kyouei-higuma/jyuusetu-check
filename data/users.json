@@ -69,5 +69,68 @@
     "active": true,
     "must_change_password": true,
     "role": "staff"
+  },
+  "mika.sugita": {
+    "name": "杉田　美香",
+    "password_hash": "37ae240244f300205edbbae2d790fa76351668469f9f37c968536b7843272a35",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
+  },
+  "takami.sasaki": {
+    "name": "佐々木　貴美",
+    "password_hash": "37ae240244f300205edbbae2d790fa76351668469f9f37c968536b7843272a35",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
+  },
+  "masaki.fujimori": {
+    "name": "藤森　匡紀",
+    "password_hash": "37ae240244f300205edbbae2d790fa76351668469f9f37c968536b7843272a35",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
+  },
+  "motohiro.aoki": {
+    "name": "青木　基博",
+    "password_hash": "37ae240244f300205edbbae2d790fa76351668469f9f37c968536b7843272a35",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
+  },
+  "kyoko.tamai": {
+    "name": "玉井　恭子",
+    "password_hash": "37ae240244f300205edbbae2d790fa76351668469f9f37c968536b7843272a35",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
+  },
+  "kunihiro.nakamura": {
+    "name": "中村　邦広",
+    "password_hash": "37ae240244f300205edbbae2d790fa76351668469f9f37c968536b7843272a35",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
+  },
+  "kaede.miura": {
+    "name": "三浦　楓",
+    "password_hash": "37ae240244f300205edbbae2d790fa76351668469f9f37c968536b7843272a35",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
+  },
+  "hitomi.nohara": {
+    "name": "野原　仁美",
+    "password_hash": "37ae240244f300205edbbae2d790fa76351668469f9f37c968536b7843272a35",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
+  },
+  "m​e​5​5​2​0​9​7​3​0​j​": {
+    "name": "藤井　一通",
+    "password_hash": "37ae240244f300205edbbae2d790fa76351668469f9f37c968536b7843272a35",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
   }
 }
