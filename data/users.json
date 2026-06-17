@@ -62,5 +62,12 @@
     "active": true,
     "must_change_password": true,
     "role": "staff"
+  },
+  "arisa.yamada": {
+    "name": "山田　有梨紗",
+    "password_hash": "37ae240244f300205edbbae2d790fa76351668469f9f37c968536b7843272a35",
+    "active": true,
+    "must_change_password": true,
+    "role": "staff"
   }
 }
