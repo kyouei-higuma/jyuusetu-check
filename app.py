@@ -23,6 +23,7 @@ from src.auth import (
     authenticate,
     change_password,
     get_all_users,
+    export_users_json,
     add_user,
     set_user_active,
     reset_user_password,
@@ -323,6 +324,21 @@ with st.sidebar:
                     st.rerun()
                 else:
                     st.error(_msg)
+
+            st.markdown("---")
+            st.markdown("**GitHub への反映（users.json）**")
+            st.caption(
+                "社員の追加・変更後は、下のボタンで users.json をダウンロードし、"
+                "ローカルの data/users.json を置き換えて GitHub に push してください。"
+            )
+            st.download_button(
+                label="📥 users.json をダウンロード",
+                data=export_users_json().encode("utf-8"),
+                file_name="users.json",
+                mime="application/json",
+                use_container_width=True,
+                key="dl_users_json",
+            )
 
         # ── 管理者専用：利用履歴・精度チェック ──────────────────────
         with st.expander("📊 利用履歴・精度チェック（管理者）"):
