@@ -1,16 +1,43 @@
 """
 AIによる画像→テキスト抽出（Google Gemini）
-PIL形式の画像を model.generate_content に渡し、JSON形式でテキストを取得する。
+PIL形式の画像を google-genai SDK に渡し、JSON形式でテキストを取得する。
 """
+import io
 import json
 import re
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 # デフォルトモデル: gemini-2.5-flash は無料枠あり
-# セーフティブロック時の代替: gemini-2.5-flash-lite（別の安全フィルター挙動、v1beta対応）
-DEFAULT_MODEL = "models/gemini-2.5-flash"
-FALLBACK_MODEL = "models/gemini-2.5-flash-lite"
+# セーフティブロック時の代替: gemini-2.5-flash-lite
+DEFAULT_MODEL = "gemini-2.5-flash"
+FALLBACK_MODEL = "gemini-2.5-flash-lite"
+
+
+def _normalize_model_name(model_name: str | None) -> str:
+    """旧形式 models/xxx と新形式 xxx の両方を受け付ける"""
+    name = (model_name or DEFAULT_MODEL).strip()
+    if name.startswith("models/"):
+        name = name[len("models/") :]
+    return name or DEFAULT_MODEL
+
+
+def _pil_to_part(image) -> types.Part:
+    """PIL Image を google-genai の Part に変換する"""
+    buf = io.BytesIO()
+    image.convert("RGB").save(buf, format="JPEG", quality=85)
+    return types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg")
+
+
+def _build_safety_settings() -> list[types.SafetySetting]:
+    """登記簿等の住所・氏名が不当にブロックされないよう安全設定を緩和"""
+    return [
+        types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=types.HarmBlockThreshold.BLOCK_NONE),
+        types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=types.HarmBlockThreshold.BLOCK_NONE),
+        types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold=types.HarmBlockThreshold.BLOCK_NONE),
+        types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold=types.HarmBlockThreshold.BLOCK_NONE),
+    ]
 
 
 class ModelNotFoundError(Exception):
@@ -30,6 +57,30 @@ class JSONParseError(Exception):
 class SafetyBlockError(Exception):
     """セーフティフィルターまたは finish_reason により応答がブロックされた場合の例外。"""
     pass
+
+
+def _generate_json_content(client: genai.Client, model_name: str, prompt: str, images: list, max_output_tokens: int = 8192) -> str:
+    """画像付きプロンプトを送信し、テキスト応答を返す"""
+    contents = [prompt] + [_pil_to_part(img) for img in images]
+    config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        max_output_tokens=max_output_tokens,
+        safety_settings=_build_safety_settings(),
+    )
+    response = client.models.generate_content(
+        model=_normalize_model_name(model_name),
+        contents=contents,
+        config=config,
+    )
+    if not getattr(response, "candidates", None):
+        raise SafetyBlockError("解析がブロックされました。")
+    c0 = response.candidates[0]
+    finish_reason = getattr(c0, "finish_reason", None)
+    reason_name = str(getattr(finish_reason, "name", finish_reason) or "")
+    reason_ok = finish_reason in (1, "STOP", "stop") or "STOP" in reason_name
+    if not reason_ok:
+        raise SafetyBlockError("解析がブロックされました。")
+    return (response.text or "").strip()
 
 
 def _rescue_incomplete_json_array(text: str) -> str | None:
@@ -656,45 +707,14 @@ def _run_form_check(api_key: str, reference_images: list, target_images: list, m
     """フォーム記載チェックのみを実行。重説画像のみを渡し、1ページ目=最初の画像で確実にチェックする。"""
     # 重説画像のみを渡す。セーフティブロック対策：最初の3ページのみ送信（1ページ目に主要項目あり）
     target_limited = list(target_images)[:3] if len(target_images) > 3 else list(target_images)
-    prompt = FORM_CHECK_PROMPT_TEMPLATE
-    content_parts = [prompt] + target_limited
-
-    try:
-        from google.generativeai.types import HarmCategory, HarmBlockThreshold
-        safety_settings = {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-        }
-        if hasattr(HarmCategory, "HARM_CATEGORY_CIVIC_INTEGRITY"):
-            safety_settings[HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY] = HarmBlockThreshold.BLOCK_NONE
-    except (ImportError, AttributeError):
-        safety_settings = [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-        ]
-
-    model = genai.GenerativeModel(model_name, safety_settings=safety_settings)
-    response = model.generate_content(
-        content_parts,
-        generation_config=genai.types.GenerationConfig(
-            response_mime_type="application/json",
-            max_output_tokens=4096,
-        ),
+    client = genai.Client(api_key=api_key.strip())
+    response_text = _generate_json_content(
+        client,
+        model_name,
+        FORM_CHECK_PROMPT_TEMPLATE,
+        target_limited,
+        max_output_tokens=4096,
     )
-    if not response.candidates:
-        raise SafetyBlockError("フォームチェックがブロックされました。")
-    c0 = response.candidates[0]
-    finish_reason = getattr(c0, "finish_reason", None)
-    reason_ok = finish_reason in (1, "STOP", "stop") or (
-        finish_reason is not None and "STOP" in str(getattr(finish_reason, "name", str(finish_reason)))
-    )
-    if not reason_ok:
-        raise SafetyBlockError("フォームチェックがブロックされました。")
-    response_text = (response.text or "").strip()
     if not response_text:
         return []
     return _parse_issues_json(response_text)
@@ -739,12 +759,13 @@ def verify_disclosure_against_evidence(
     if not target_images:
         raise ValueError("チェック対象の画像がありません")
 
-    genai.configure(api_key=api_key.strip())
+    client = genai.Client(api_key=api_key.strip())
 
-    model = model_name or DEFAULT_MODEL
+    model = _normalize_model_name(model_name or DEFAULT_MODEL)
+    fallback = _normalize_model_name(FALLBACK_MODEL)
     # 第1段階: フォーム記載チェック（重説画像のみを渡して確実に実行）
     form_issues: list[dict] = []
-    form_models = [model] if model == FALLBACK_MODEL else [model, FALLBACK_MODEL]
+    form_models = [model] if model == fallback else [model, fallback]
     for form_model in form_models:
         try:
             form_issues = _run_form_check(api_key, reference_images, target_images, form_model)
@@ -756,7 +777,7 @@ def verify_disclosure_against_evidence(
                     issue["image_index"] = int(idx) + ref_count
             break
         except (SafetyBlockError, JSONParseError):
-            if form_model == FALLBACK_MODEL:
+            if form_model == fallback:
                 form_issues = [{
                     "category": "フォームチェック",
                     "status": "warning",
@@ -768,13 +789,9 @@ def verify_disclosure_against_evidence(
                     "image_index": None,
                 }]
             else:
-                continue  # 代替モデル(gemini-2.5-flash-lite)でリトライ
+                continue  # 代替モデルでリトライ
 
     # 第2段階: 添付資料・数値照合（メインAPI呼び出し）
-    generation_config = genai.types.GenerationConfig(
-        response_mime_type="application/json",
-        max_output_tokens=8192,
-    )
     verify_prompt = VERIFY_PROMPT_TEMPLATE.format(
         reference_count=len(reference_images),
         target_count=len(target_images),
@@ -782,54 +799,24 @@ def verify_disclosure_against_evidence(
 
     # 画像の順序: 先頭が根拠資料、後ろがチェック対象
     all_images = list(reference_images) + list(target_images)
-    content_parts = [verify_prompt] + all_images
 
-    # セーフティ設定を緩和（登記簿・契約書の住所・氏名等が不当にブロックされないようにする）
-    try:
-        from google.generativeai.types import HarmCategory, HarmBlockThreshold
-        safety_settings = {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-        }
-        if hasattr(HarmCategory, "HARM_CATEGORY_CIVIC_INTEGRITY"):
-            safety_settings[HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY] = HarmBlockThreshold.BLOCK_NONE
-    except (ImportError, AttributeError):
-        safety_settings = [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-        ]
-
-    # マルチモーダル対応モデル。セーフティブロック時は gemini-2.5-flash-lite でリトライ
+    # マルチモーダル対応モデル。セーフティブロック時は flash-lite でリトライ
     response_text = ""
-    last_error: Exception | None = None
-    verify_models = [model] if model == FALLBACK_MODEL else [model, FALLBACK_MODEL]
+    verify_models = [model] if model == fallback else [model, fallback]
     for verify_model in verify_models:
         try:
-            gen_model = genai.GenerativeModel(verify_model, safety_settings=safety_settings)
-            response = gen_model.generate_content(
-                content_parts,
-                generation_config=generation_config,
+            response_text = _generate_json_content(
+                client,
+                verify_model,
+                verify_prompt,
+                all_images,
+                max_output_tokens=8192,
             )
-            if not response.candidates:
-                raise SafetyBlockError("解析がブロックされました。")
-            c0 = response.candidates[0]
-            finish_reason = getattr(c0, "finish_reason", None)
-            reason_ok = finish_reason in (1, "STOP", "stop") or (
-                finish_reason is not None and "STOP" in str(getattr(finish_reason, "name", str(finish_reason)))
-            )
-            if not reason_ok:
-                raise SafetyBlockError("解析がブロックされました。")
-            response_text = (response.text or "").strip()
             break
-        except SafetyBlockError as e:
-            last_error = e
-            if verify_model == FALLBACK_MODEL:
+        except SafetyBlockError:
+            if verify_model == fallback:
                 raise
-            continue  # 代替モデル(gemini-2.5-flash-lite)でリトライ
+            continue  # 代替モデルでリトライ
     if not response_text:
         # 空の応答でもフォームチェック結果は返す
         return form_issues

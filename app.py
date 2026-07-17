@@ -461,23 +461,25 @@ with st.sidebar:
 
     # AIモデルの選択肢
     MODEL_OPTIONS = {
-        "Gemini 3.5 Flash (推奨・標準)": "models/gemini-3.5-flash",
-        "Gemini 3.1 Pro (超高精度・最高峰)": "models/gemini-3.1-pro",
-        "Gemini 3.1 Flash-Lite (高速・軽量)": "models/gemini-3.1-flash-lite",
-        "Gemini 2.5 Pro (前世代・高精度)": "models/gemini-2.5-pro",
-        "Gemini 2.5 Flash (前世代・標準)": "models/gemini-2.5-flash",
+        "Gemini 3.5 Flash (推奨・標準)": "gemini-3.5-flash",
+        "Gemini 3.1 Pro (超高精度・最高峰)": "gemini-3.1-pro",
+        "Gemini 3.1 Flash-Lite (高速・軽量)": "gemini-3.1-flash-lite",
+        "Gemini 2.5 Pro (前世代・高精度)": "gemini-2.5-pro",
+        "Gemini 2.5 Flash (前世代・標準)": "gemini-2.5-flash",
     }
 
     # デフォルトの選択肢を Secrets 等から決定
-    default_model_code = "models/gemini-3.5-flash"
+    default_model_code = "gemini-3.5-flash"
     try:
-        default_model_code = st.secrets.get("GEMINI_MODEL", "models/gemini-3.5-flash")
+        default_model_code = st.secrets.get("GEMINI_MODEL", "gemini-3.5-flash")
     except (AttributeError, KeyError, FileNotFoundError):
         pass
+    if isinstance(default_model_code, str) and default_model_code.startswith("models/"):
+        default_model_code = default_model_code[len("models/") :]
 
     # 存在しないモデル名が指定されていた場合の安全対策
     if default_model_code not in MODEL_OPTIONS.values():
-        default_model_code = "models/gemini-3.5-flash"
+        default_model_code = "gemini-3.5-flash"
 
     default_index = list(MODEL_OPTIONS.values()).index(default_model_code)
 
@@ -598,7 +600,7 @@ if st.session_state.get("process_started", False):
 
     # 使用モデルの確定（サイドバーで選択されたモデルを使用）
     if "gemini_model" not in locals() and "gemini_model" not in globals():
-        gemini_model = "models/gemini-3.5-flash"
+        gemini_model = "gemini-3.5-flash"
 
     # Geminiで照合チェック（フォームチェック → 添付資料・数値照合の2段階）
     with st.spinner("フォームチェックと照合を実行中..."):
