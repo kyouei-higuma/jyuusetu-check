@@ -31,6 +31,15 @@ from src.auth import (
     verify_login_token,
 )
 from src.history import save_history, load_all_history, delete_history
+from src.drafts import (
+    save_draft,
+    list_drafts,
+    load_draft,
+    load_draft_files,
+    delete_draft,
+    MAX_DRAFTS_PER_USER,
+    DRAFT_RETENTION_DAYS,
+)
 
 
 def _export_users_json_content() -> str:
@@ -323,6 +332,45 @@ with st.sidebar:
                     st.success(_msg)
                 else:
                     st.error(_msg)
+
+    # ── 全ユーザー：下書き（続きから再開） ───────────────────────
+    with st.expander("📝 下書き（続きから再開）"):
+        st.caption(
+            f"チェック開始時に資料を自動保存します（保存期間 {DRAFT_RETENTION_DAYS} 日・"
+            f"1人あたり最大 {MAX_DRAFTS_PER_USER} 件。超過分は古いものから削除）。"
+        )
+        _my_drafts = list_drafts(_cur["user_id"])
+        if not _my_drafts:
+            st.info("下書きはありません。")
+        else:
+            for _dr in _my_drafts:
+                _dr_id = _dr["id"]
+                _dr_pl = _dr.get("payload", {})
+                st.markdown("---")
+                st.markdown(f"**{_dr.get('label') or _dr_pl.get('target_name') or '無題'}**")
+                st.caption(
+                    f"最終保存: {_dr.get('updated', '')} / "
+                    f"根拠資料 {len(_dr_pl.get('reference_names', []))} 件"
+                )
+                _c1, _c2 = st.columns(2)
+                if _c1.button("▶️ 再開", key=f"resume_draft_{_dr_id}", use_container_width=True):
+                    _dfiles = load_draft_files(_cur["user_id"], _dr_id)
+                    _tname = _dr_pl.get("target_name", "")
+                    _tgt = next((f for f in _dfiles if f["name"] == _tname), None)
+                    _refs = [f for f in _dfiles if f["name"] != _tname]
+                    if _tgt and _refs:
+                        st.session_state["check_inputs"] = {"reference": _refs, "target": _tgt}
+                        st.session_state["current_draft_id"] = _dr_id
+                        st.session_state["process_started"] = False
+                        st.success("下書きの資料を復元しました。メイン画面からチェックを再実行できます。")
+                        st.rerun()
+                    else:
+                        st.error("下書きの資料を復元できませんでした。")
+                if _c2.button("🗑️ 削除", key=f"del_draft_{_dr_id}", use_container_width=True):
+                    delete_draft(_cur["user_id"], _dr_id)
+                    if st.session_state.get("current_draft_id") == _dr_id:
+                        st.session_state["current_draft_id"] = None
+                    st.rerun()
 
     # ── 全ユーザー：自分の利用履歴 ─────────────────────────────
     with st.expander("📋 自分の利用履歴"):
@@ -646,19 +694,60 @@ with col2:
 # 両方アップロードされたら「チェック開始」ボタンを表示
 if reference_files and target_file:
     if st.button("🔍 チェック開始", type="primary", use_container_width=True):
+        # アップロードされたファイルの実体をセッションに保持（下書き保存・再開用）
+        _ref_inputs = []
+        for _rf in reference_files:
+            _rf.seek(0)
+            _ref_inputs.append({"name": _rf.name, "bytes": _rf.read()})
+        target_file.seek(0)
+        _tgt_input = {"name": target_file.name, "bytes": target_file.read()}
+        st.session_state["check_inputs"] = {"reference": _ref_inputs, "target": _tgt_input}
+
+        # チェック開始時点の資料を下書き保存（途中でセッションが切れても再開できるように）
+        try:
+            _cu = st.session_state.get("current_user", {"user_id": "unknown"})
+            st.session_state["current_draft_id"] = save_draft(
+                user_id=_cu["user_id"],
+                payload={
+                    "reference_names": [f["name"] for f in _ref_inputs],
+                    "target_name": _tgt_input["name"],
+                },
+                draft_id=st.session_state.get("current_draft_id"),
+                files=_ref_inputs + [_tgt_input],
+                label=_tgt_input["name"],
+            )
+        except Exception as _draft_err:
+            logging.error(f"下書きの保存に失敗しました: {_draft_err}")
+
         # セッション状態に保存して処理を開始
+        st.session_state["process_started"] = True
+        st.rerun()
+elif st.session_state.get("check_inputs") and not st.session_state.get("process_started"):
+    # 下書きから復元された資料でチェックを実行できる状態
+    _ci = st.session_state["check_inputs"]
+    st.info(
+        f"📝 下書きから資料を復元済みです：重要事項説明書「{_ci['target']['name']}」＋"
+        f"根拠資料 {len(_ci['reference'])} 件"
+    )
+    if st.button("🔍 復元した資料でチェック開始", type="primary", use_container_width=True):
         st.session_state["process_started"] = True
         st.rerun()
 
 # 処理開始フラグが立っている場合のみ処理を実行
 if st.session_state.get("process_started", False):
+    _inputs = st.session_state.get("check_inputs")
+    if not _inputs:
+        st.session_state["process_started"] = False
+        st.warning("チェック対象の資料が見つかりません。ファイルをアップロードし直してください。")
+        st.stop()
+
     # 根拠資料の画像化
     reference_images_all = []
     analyzed_pdfs = []
     try:
-        for ref_file in reference_files:
-            content = ref_file.read()
-            analyzed_pdfs.append({"name": ref_file.name, "bytes": content})
+        for _ref in _inputs["reference"]:
+            content = _ref["bytes"]
+            analyzed_pdfs.append({"name": _ref["name"], "bytes": content})
             images_b64 = pdf_to_images(io.BytesIO(content))
             pil_images = [
                 Image.open(io.BytesIO(base64.b64decode(b64))) for b64 in images_b64
@@ -671,8 +760,8 @@ if st.session_state.get("process_started", False):
     # 重要事項説明書の画像化
     target_images_all = []
     try:
-        content = target_file.read()
-        analyzed_pdfs.append({"name": target_file.name, "bytes": content})
+        content = _inputs["target"]["bytes"]
+        analyzed_pdfs.append({"name": _inputs["target"]["name"], "bytes": content})
         images_b64 = pdf_to_images(io.BytesIO(content))
         target_images_all = [
             Image.open(io.BytesIO(base64.b64decode(b64))) for b64 in images_b64
@@ -715,14 +804,25 @@ if st.session_state.get("process_started", False):
                     save_history(
                         user_id=cur_user["user_id"],
                         user_name=cur_user["name"],
-                        reference_file_names=[f.name for f in reference_files],
-                        target_file_name=target_file.name,
+                        reference_file_names=[f["name"] for f in _inputs["reference"]],
+                        target_file_name=_inputs["target"]["name"],
                         issues=issues,
                         analyzed_pdfs=analyzed_pdfs
                     )
                 except Exception as hist_err:
                     logging.error(f"履歴の保存に失敗しました: {hist_err}")
-                
+
+                # チェック完了 → 下書きは役目を終えたので削除（履歴へ移行済み）
+                if st.session_state.get("current_draft_id"):
+                    try:
+                        delete_draft(
+                            st.session_state.get("current_user", {"user_id": "unknown"})["user_id"],
+                            st.session_state["current_draft_id"],
+                        )
+                    except Exception as _del_err:
+                        logging.error(f"下書きの削除に失敗しました: {_del_err}")
+                    st.session_state["current_draft_id"] = None
+
                 break
             except SafetyBlockError:
                 if attempt == 0:

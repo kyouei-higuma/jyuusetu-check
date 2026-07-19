@@ -29,5 +29,8 @@ Thumbs.db
 # 利用履歴データ（機密情報の漏洩を防ぐためGit管理外にする）
 data/history/
 
+# 下書きデータ（作業途中の資料PDF等を含むためGit管理外にする）
+data/drafts/
+
 # ログイン保持 Cookie の署名鍵（機密）
 data/.auth_cookie_secret
