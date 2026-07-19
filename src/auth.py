@@ -7,12 +7,19 @@
 """
 
 import hashlib
+import hmac
 import json
+import os
+import secrets
+import time
 from pathlib import Path
 from typing import Optional
 
 # users.json のパス（プロジェクトルート/data/users.json）
 _USERS_FILE = Path(__file__).resolve().parent.parent / "data" / "users.json"
+
+# ログイン保持用 Cookie トークンの署名鍵ファイル
+_COOKIE_SECRET_FILE = _USERS_FILE.parent / ".auth_cookie_secret"
 
 
 def _hash_password(password: str) -> str:
@@ -48,6 +55,74 @@ def _save_users(users: dict):
     output = {"_comment": comment, **users}
     with open(_USERS_FILE, "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
+
+
+def _get_cookie_secret() -> bytes:
+    """Cookie トークン署名用の秘密鍵を取得する。
+
+    優先順位: 環境変数 AUTH_COOKIE_SECRET → data/.auth_cookie_secret ファイル（なければ生成）。
+    Streamlit Cloud では再デプロイでファイルが消えるため、恒久運用には
+    Secrets に AUTH_COOKIE_SECRET を設定することを推奨。
+    """
+    env_secret = os.environ.get("AUTH_COOKIE_SECRET", "")
+    if env_secret:
+        return env_secret.encode("utf-8")
+    if _COOKIE_SECRET_FILE.exists():
+        try:
+            data = _COOKIE_SECRET_FILE.read_text(encoding="utf-8").strip()
+            if data:
+                return data.encode("utf-8")
+        except Exception:
+            pass
+    new_secret = secrets.token_hex(32)
+    try:
+        _COOKIE_SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _COOKIE_SECRET_FILE.write_text(new_secret, encoding="utf-8")
+    except Exception:
+        pass
+    return new_secret.encode("utf-8")
+
+
+def _sign_token_payload(payload: str) -> str:
+    return hmac.new(_get_cookie_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def create_login_token(user_id: str, days: int = 30) -> str:
+    """ログイン保持用の署名付きトークンを発行する（Cookie 保存用）"""
+    expiry = int(time.time()) + days * 24 * 60 * 60
+    payload = f"{user_id}|{expiry}"
+    return f"{payload}|{_sign_token_payload(payload)}"
+
+
+def verify_login_token(token: str) -> Optional[dict]:
+    """Cookie のトークンを検証し、有効ならユーザー情報を返す。
+
+    - 署名不一致・期限切れ・ユーザー無効化済みの場合は None
+    """
+    if not token:
+        return None
+    parts = token.split("|")
+    if len(parts) != 3:
+        return None
+    user_id, expiry_str, signature = parts
+    payload = f"{user_id}|{expiry_str}"
+    if not hmac.compare_digest(_sign_token_payload(payload), signature):
+        return None
+    try:
+        if int(expiry_str) < time.time():
+            return None
+    except ValueError:
+        return None
+    users = _load_users()
+    user = users.get(user_id)
+    if not user or not user.get("active", True):
+        return None
+    return {
+        "user_id": user_id,
+        "name": user.get("name", user_id),
+        "role": user.get("role", "staff"),
+        "must_change_password": user.get("must_change_password", False),
+    }
 
 
 def authenticate(user_id: str, password: str) -> tuple[bool, Optional[dict], str]:

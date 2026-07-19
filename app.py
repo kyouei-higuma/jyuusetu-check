@@ -27,6 +27,8 @@ from src.auth import (
     set_user_active,
     reset_user_password,
     delete_user,
+    create_login_token,
+    verify_login_token,
 )
 from src.history import save_history, load_all_history, delete_history
 
@@ -151,6 +153,38 @@ html("""
 """, height=0, width=0)
 
 # ── ログイン認証 ──────────────────────────────────────────────────
+# ログイン保持用 Cookie
+_AUTH_COOKIE_NAME = "kyouei_jyusetsu_check_auth"
+_AUTH_COOKIE_DAYS = 30
+
+
+def _render_set_auth_cookie(token: str):
+    """ブラウザにログイン保持用 Cookie を保存する（http ローカル環境では Secure を付けない）"""
+    html(f"""
+<script>
+    const secure = window.top.location.protocol === 'https:' ? '; Secure' : '';
+    window.top.document.cookie = "{_AUTH_COOKIE_NAME}={token}; path=/; max-age={_AUTH_COOKIE_DAYS * 24 * 60 * 60}; SameSite=Lax" + secure;
+</script>
+""", height=0, width=0)
+
+
+def _render_clear_auth_cookie():
+    """ログアウト時にログイン保持用 Cookie を削除する"""
+    html(f"""
+<script>
+    window.top.document.cookie = "{_AUTH_COOKIE_NAME}=; path=/; max-age=0; SameSite=Lax";
+</script>
+""", height=0, width=0)
+
+
+def _get_auth_cookie_token() -> str:
+    """リクエストの Cookie からログイン保持トークンを取得する"""
+    try:
+        return st.context.cookies.get(_AUTH_COOKIE_NAME, "") or ""
+    except Exception:
+        return ""
+
+
 def _show_login_page():
     """ログイン画面を表示し、認証が通るまでアプリ本体を表示しない"""
     st.markdown("""
@@ -179,6 +213,10 @@ def _show_login_page():
     </style>
     """, unsafe_allow_html=True)
 
+    # 明示ログアウト直後は Cookie を確実に削除する
+    if st.session_state.get("logged_out_explicitly"):
+        _render_clear_auth_cookie()
+
     st.markdown('<div class="login-container">', unsafe_allow_html=True)
     st.markdown('<div class="login-title">📄 重説クロスチェックシステム</div>', unsafe_allow_html=True)
     st.markdown('<div class="login-sub">社員ログイン</div>', unsafe_allow_html=True)
@@ -186,6 +224,7 @@ def _show_login_page():
     with st.form("login_form"):
         user_id = st.text_input("ユーザーID", placeholder="例: tanaka")
         password = st.text_input("パスワード", type="password", placeholder="パスワードを入力")
+        remember_me = st.checkbox(f"ログイン状態を保持する（{_AUTH_COOKIE_DAYS}日間）", value=True)
         submitted = st.form_submit_button("ログイン", use_container_width=True)
 
     if submitted:
@@ -193,6 +232,12 @@ def _show_login_page():
         if ok:
             st.session_state["logged_in"] = True
             st.session_state["current_user"] = user_info
+            st.session_state["logged_out_explicitly"] = False
+            if remember_me:
+                # rerun 後の描画で Cookie 保存 JS を確実に実行するため保留しておく
+                st.session_state["pending_auth_cookie"] = create_login_token(
+                    user_info["user_id"], _AUTH_COOKIE_DAYS
+                )
             st.rerun()
         else:
             st.error(msg)
@@ -230,10 +275,21 @@ if "logged_in" not in st.session_state:
 if "current_user" not in st.session_state:
     st.session_state["current_user"] = None
 
+# Cookie による自動ログイン（「ログイン状態を保持する」でログインした場合）
+if not st.session_state["logged_in"] and not st.session_state.get("logged_out_explicitly"):
+    _cookie_user = verify_login_token(_get_auth_cookie_token())
+    if _cookie_user:
+        st.session_state["logged_in"] = True
+        st.session_state["current_user"] = _cookie_user
+
 # 未ログインならログイン画面だけ表示してここで停止
 if not st.session_state["logged_in"]:
     _show_login_page()
     st.stop()
+
+# ログイン直後: 保留していたログイン保持 Cookie をブラウザへ保存
+if st.session_state.get("pending_auth_cookie"):
+    _render_set_auth_cookie(st.session_state.pop("pending_auth_cookie"))
 
 # 初回ログイン時はパスワード変更画面
 if st.session_state["current_user"].get("must_change_password"):
@@ -248,6 +304,7 @@ with st.sidebar:
     if st.button("ログアウト", use_container_width=True):
         st.session_state["logged_in"] = False
         st.session_state["current_user"] = None
+        st.session_state["logged_out_explicitly"] = True  # Cookie 自動ログインを抑止
         st.rerun()
 
     # パスワード変更
@@ -266,6 +323,47 @@ with st.sidebar:
                     st.success(_msg)
                 else:
                     st.error(_msg)
+
+    # ── 全ユーザー：自分の利用履歴 ─────────────────────────────
+    with st.expander("📋 自分の利用履歴"):
+        _my_history = [h for h in load_all_history() if h.get("user_id") == _cur["user_id"]]
+        if not _my_history:
+            st.info("利用履歴はまだありません。")
+        else:
+            st.caption(f"直近の実行履歴（{len(_my_history)}件）")
+            for _mh in _my_history[:20]:
+                _mh_id = _mh["id"]
+                _mh_issues = _mh.get("issues", [])
+                _mh_err = sum(1 for i in _mh_issues if i.get("status") == "error")
+                _mh_warn = sum(1 for i in _mh_issues if i.get("status") in ("warning", "suggestion"))
+                st.markdown("---")
+                st.markdown(f"📅 **{_mh['timestamp']}**")
+                st.caption(f"重要事項説明書: {_mh.get('target_file', '')}")
+                st.caption(f"根拠資料: {', '.join(_mh.get('reference_files', []))}")
+                st.markdown(f"結果: 🔴 エラー **{_mh_err}**件 | 🟡 警告等 **{_mh_warn}**件")
+                with st.popover("🔍 指摘内容を見る", use_container_width=True):
+                    if not _mh_issues:
+                        st.success("指摘事項はありませんでした。")
+                    for _mi in _mh_issues:
+                        _micon = "🔴" if _mi.get("status") == "error" else ("💡" if _mi.get("status") == "suggestion" else "🟡")
+                        st.markdown(f"**{_micon} [{_mi.get('category', '')}] {_mi.get('item', '')}**")
+                        st.write(_mi.get("message", ""))
+                        st.caption(f"根拠資料（正）: {_mi.get('evidence', '')}")
+                        st.caption(f"重要事項説明書（案）: {_mi.get('target', '')}")
+                        st.divider()
+                _mh_pdfs = _mh.get("saved_pdfs", [])
+                if _mh_pdfs:
+                    with st.popover("📂 添付資料", use_container_width=True):
+                        _mh_dir = Path(__file__).resolve().parent / "data" / "history" / "pdfs" / _mh_id
+                        for _pn in _mh_pdfs:
+                            _pp = _mh_dir / _pn
+                            if _pp.exists():
+                                st.download_button(
+                                    label=f"📥 {_pn}",
+                                    data=_pp.read_bytes(),
+                                    file_name=_pn,
+                                    key=f"my_dl_{_mh_id}_{_pn}",
+                                )
 
     # ── 管理者専用：ユーザー管理 ──────────────────────────────
     if _cur.get("role") == "admin":
