@@ -76,6 +76,45 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# 統合先（社内サーバー上の重説システム）
+_MIGRATION_URL = "https://jusetsu.n-kyouei-system.com/"
+
+
+def _render_migration_banner():
+    """旧クロスチェック単独アプリ向けの移行アナウンス"""
+    st.markdown(
+        f"""
+<div style="
+    background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
+    border: 2px solid #f97316;
+    border-radius: 12px;
+    padding: 1.1rem 1.4rem;
+    margin: 0 0 1.25rem 0;
+">
+  <div style="font-size: 1.15rem; font-weight: 800; color: #9a3412; margin-bottom: 0.4rem;">
+    ⚠️ 本画面は移行中です
+  </div>
+  <div style="color: #7c2d12; font-size: 0.98rem; line-height: 1.55;">
+    クロスチェック機能は <strong>重説自動入力システム</strong>（作成＋クロスチェック統合版）へ移行しています。<br>
+    今後は次のURLをご利用ください（ログイン後、サイドバーで「📄 クロスチェック」を選択）。
+  </div>
+  <div style="margin-top: 0.75rem;">
+    <a href="{_MIGRATION_URL}" target="_blank" rel="noopener noreferrer"
+       style="display: inline-block; background: #ea580c; color: #fff; font-weight: 700;
+              text-decoration: none; padding: 0.55rem 1.1rem; border-radius: 8px;">
+      重説自動入力システムを開く →
+    </a>
+  </div>
+  <div style="margin-top: 0.55rem; color: #9a3412; font-size: 0.85rem;">
+    {_MIGRATION_URL}<br>
+    ※本（旧）画面は近日中に停止予定です。新しい機能・修正は統合版のみに反映されます。
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 # ---------- 画面表示のカスタマイズ（ロゴ・フッター等の非表示） ----------
 hide_style = """
     <style>
@@ -88,6 +127,9 @@ hide_style = """
     </style>
 """
 st.markdown(hide_style, unsafe_allow_html=True)
+
+# ログイン前にも見えるよう、画面最上部に移行アナウンスを表示
+_render_migration_banner()
 
 # Streamlit Community Cloud の外枠（親DOM）にある「Hosted with Streamlit（王冠）」や「Created by（アバター）」、「Manage app」を非表示にする
 from streamlit.components.v1 import html
@@ -228,7 +270,11 @@ def _show_login_page():
 
     st.markdown('<div class="login-container">', unsafe_allow_html=True)
     st.markdown('<div class="login-title">📄 重説クロスチェックシステム</div>', unsafe_allow_html=True)
-    st.markdown('<div class="login-sub">社員ログイン</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-sub">社員ログイン（旧画面・移行中）</div>', unsafe_allow_html=True)
+    st.warning(
+        f"本アプリは **重説自動入力システム** へ移行中です。\n\n"
+        f"→ [{_MIGRATION_URL}]({_MIGRATION_URL})"
+    )
 
     with st.form("login_form"):
         user_id = st.text_input("ユーザーID", placeholder="例: tanaka")
@@ -310,6 +356,13 @@ with st.sidebar:
     # ── ログインユーザー情報 ───────────────────────────────────
     _cur = st.session_state["current_user"]
     st.markdown(f"**ログイン中:** {_cur['name']}")
+    st.warning("⚠️ 移行中：統合版をご利用ください")
+    st.link_button(
+        "🏠 重説自動入力システムを開く",
+        _MIGRATION_URL,
+        use_container_width=True,
+        type="primary",
+    )
     if st.button("ログアウト", use_container_width=True):
         st.session_state["logged_in"] = False
         st.session_state["current_user"] = None
@@ -657,8 +710,12 @@ with st.sidebar:
     st.caption("※ AIモデルはいつでも切り替え可能です。")
 
 # ---------- メインエリア ----------
-st.title("📄 重要事項説明書 クロスチェック")
+st.title("📄 重要事項説明書 クロスチェック（旧）")
 st.caption("根拠資料（登記簿・公図など）と重要事項説明書を照合し、記載内容の一致を厳密にチェックします。")
+st.info(
+    f"**移行のお知らせ:** クロスチェックは重説自動入力システムへ統合済みです。"
+    f" 新機能・修正の反映は統合版のみです → [{_MIGRATION_URL}]({_MIGRATION_URL})"
+)
 
 if not (gemini_api_key and gemini_api_key.strip()):
     st.warning(
